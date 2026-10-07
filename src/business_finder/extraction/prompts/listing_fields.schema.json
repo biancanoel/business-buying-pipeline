@@ -1,0 +1,47 @@
+{
+  "type": "object",
+  "properties": {
+    "business_name": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "business_type": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "requires_contractor_license": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
+    "asking_price": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+    "gross_revenue": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+    "seller_discretionary_earnings": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+    "down_payment": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+    "year_established": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+    "years_in_business": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+    "employee_count": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+    "city": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "county": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "state": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "source_snippets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {"type": "string"},
+          "quote": {"type": "string"}
+        },
+        "required": ["field", "quote"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "business_name",
+    "business_type",
+    "requires_contractor_license",
+    "asking_price",
+    "gross_revenue",
+    "seller_discretionary_earnings",
+    "down_payment",
+    "year_established",
+    "years_in_business",
+    "employee_count",
+    "city",
+    "county",
+    "state",
+    "source_snippets"
+  ],
+  "additionalProperties": false
+}
