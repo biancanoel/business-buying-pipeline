@@ -1,0 +1,25 @@
+{
+  "name": "Lucie: Petaluma area, up to $1.2M",
+  "business_types": [
+    "physical therapy clinic",
+    "medical spa (MedSpa)",
+    "commercial cleaning",
+    "residential cleaning",
+    "yard care / gardening",
+    "pool cleaning",
+    "gutter cleaning",
+    "other home services that do not need a contractor's license"
+  ],
+  "business_type_guidance": "Home-service businesses qualify only if the work does not need a contractor's license (for example a California CSLB license). Yard care and gardening qualify; landscaping that needs a licensed contractor (C-27) does not. Physical therapy clinics and MedSpas qualify even though their staff hold professional licenses.",
+  "minimum_revenue": 1000000,
+  "minimum_seller_discretionary_earnings": 250000,
+  "asking_price_min": null,
+  "asking_price_max": 1200000,
+  "asking_price_target": 1000000,
+  "minimum_years_in_business": 5,
+  "target_city": "Petaluma",
+  "target_state": "CA",
+  "max_distance_miles": 250,
+  "notify_slack_channel": null,
+  "notify_email_address": null
+}

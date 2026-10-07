@@ -1,0 +1,22 @@
+[project]
+name = "business-finder"
+version = "0.1.0"
+description = "Finds small businesses for sale that match saved search criteria and posts new matches to Slack."
+readme = "README.md"
+authors = [
+    { name = "Bianca Poling", email = "bnoeltorres@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.28.1",
+    "pydantic>=2.13.5",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
