@@ -92,3 +92,11 @@ create table if not exists matches (
 create index if not exists matches_not_yet_notified
     on matches (saved_search_id)
     where notified_at is null;
+
+-- Supabase publishes every table through its web API to anyone with the
+-- project's public key. The pipeline connects to the database directly, as
+-- the tables' owner, which is not affected by row level security. Turning
+-- it on with no policies closes the web API to these tables.
+alter table listings enable row level security;
+alter table saved_searches enable row level security;
+alter table matches enable row level security;
