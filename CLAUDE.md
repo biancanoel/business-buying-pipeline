@@ -14,6 +14,11 @@ Find small businesses for sale that match a buyer's criteria across several list
 - Secrets and environment-specific values (API keys, webhook URLs, inbox credentials, database URL) come from environment variables, never hardcoded.
 - Keep the core logic free of any interface code (CLI, web, Slack). Interfaces are thin wrappers that call the core.
 
+## Testing (important)
+- **Test-driven development.** For every bug fix or new behavior, write the test first, run it and show that it fails for the right reason, then write the code that makes it pass.
+- **Do not change existing tests while fixing a bug or building a feature.** Existing tests are the rules of the game; editing them to make new code pass hides regressions. If an existing test seems wrong or blocks a change, stop and ask the user before touching it. This includes shared test helpers and fixtures.
+- Keep the suite small. Prefer a few tests of real behavior over many tests of small variations, and avoid complicated mocking structures; ask before adding a new fake or mock.
+
 ## Phase 1 is a pipeline, not an agent
 Phase 1 is a deterministic pipeline. Code controls the sequence of steps; a model is used only for the nuanced parts of data extraction. Do **not** use an agent framework or MCP for Phase 1.
 

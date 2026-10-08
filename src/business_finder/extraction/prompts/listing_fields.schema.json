@@ -14,6 +14,7 @@
     "city": {"anyOf": [{"type": "string"}, {"type": "null"}]},
     "county": {"anyOf": [{"type": "string"}, {"type": "null"}]},
     "state": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "region": {"anyOf": [{"type": "string"}, {"type": "null"}]},
     "source_snippets": {
       "type": "array",
       "items": {
@@ -25,7 +26,8 @@
         "required": ["field", "quote"],
         "additionalProperties": false
       }
-    }
+    },
+    "conflict_notes": {"type": "array", "items": {"type": "string"}}
   },
   "required": [
     "business_name",
@@ -41,7 +43,9 @@
     "city",
     "county",
     "state",
-    "source_snippets"
+    "region",
+    "source_snippets",
+    "conflict_notes"
   ],
   "additionalProperties": false
 }

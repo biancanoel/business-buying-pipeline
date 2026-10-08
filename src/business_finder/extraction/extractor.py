@@ -27,6 +27,20 @@ SCHEMA_FILE = "listing_fields.schema.json"
 
 EARLIEST_PLAUSIBLE_YEAR = 1800
 
+# Facts where the site's value and the model's reading of the text should
+# agree; a difference is recorded as a conflict for the buyer to check.
+FIELDS_CHECKED_FOR_CONFLICTS = {
+    "asking_price",
+    "gross_revenue",
+    "seller_discretionary_earnings",
+    "down_payment",
+    "year_established",
+    "employee_count",
+    "city",
+    "county",
+    "state",
+}
+
 
 class ExtractionError(Exception):
     """Raised when a model's answer for one listing can't be used.
@@ -77,7 +91,9 @@ class ExtractionResult(BaseModel):
     city: str | None
     county: str | None
     state: str | None
+    region: str | None
     source_snippets: list[SourceSnippet]
+    conflict_notes: list[str]
 
 
 # --- Prompt and schema files ------------------------------------------------
@@ -123,6 +139,21 @@ def year_from_years_in_business(years_in_business: int | None, current_year: int
     return plausible_year_or_none(current_year - years_in_business, current_year)
 
 
+def single_state_code_or_none(state: str | None) -> str | None:
+    """Keep the state only if it is one two-letter code.
+
+    The schema can't force the format, and a model sometimes answers
+    "CA, OR" for a business in several states. A listing in several states
+    has no single state, so anything but one code becomes None.
+    """
+    if state is None:
+        return None
+    code = state.strip().upper()
+    if len(code) == 2 and code.isalpha():
+        return code
+    return None
+
+
 def fields_from_extraction(result: ExtractionResult, current_year: int | None = None) -> ListingFields:
     """Convert a validated model answer into `ListingFields`.
 
@@ -154,9 +185,36 @@ def fields_from_extraction(result: ExtractionResult, current_year: int | None = 
         employee_count=employee_count,
         city=result.city,
         county=result.county,
-        state=result.state.upper() if result.state else None,
+        state=single_state_code_or_none(result.state),
+        region=result.region,
+        conflict_notes=list(result.conflict_notes),
         source_snippets=snippets,
     )
+
+
+def normalized_for_comparison(field_name: str, value: object) -> object:
+    """Put a value in a form where equal facts compare equal ("Sonoma County" == "sonoma")."""
+    if isinstance(value, str):
+        text = value.strip().casefold()
+        if field_name == "county":
+            text = text.removesuffix(" county").strip()
+        return text
+    return value
+
+
+def disagreement_note(field_name: str, site_value: object, model_value: object) -> str | None:
+    """Describe a disagreement between the site's value and the model's, if there is one.
+
+    Founding years may differ by one, because "in business N years" only
+    gives the year approximately.
+    """
+    if site_value is None or model_value is None:
+        return None
+    if field_name == "year_established" and abs(site_value - model_value) <= 1:
+        return None
+    if normalized_for_comparison(field_name, site_value) == normalized_for_comparison(field_name, model_value):
+        return None
+    return f"{field_name}: listing details say {site_value!r}, listing text says {model_value!r}"
 
 
 def merge_fields(from_site: ListingFields, from_model: ListingFields) -> ListingFields:
@@ -164,7 +222,9 @@ def merge_fields(from_site: ListingFields, from_model: ListingFields) -> Listing
 
     The site's own fields win: they come from the listing form the seller
     filled in, so they are more reliable than reading prose. The model
-    only fills fields the site left empty.
+    only fills fields the site left empty. Where both have a value and
+    they disagree, the site's value is kept and the disagreement is added
+    to `conflict_notes`, alongside any conflicts the model reported.
 
     One exception: `business_type` comes from the model when it has one.
     Site categories are broad labels ("Service", "Lawn/Landscaping"), while
@@ -172,16 +232,23 @@ def merge_fields(from_site: ListingFields, from_model: ListingFields) -> Listing
     matching needs.
     """
     merged_values = {}
+    conflict_notes = list(from_model.conflict_notes)
     for field_name in ListingFields.model_fields:
-        if field_name == "source_snippets":
+        if field_name in {"source_snippets", "conflict_notes", "states"}:
             continue
         site_value = getattr(from_site, field_name)
         model_value = getattr(from_model, field_name)
         if field_name == "business_type":
             merged_values[field_name] = model_value or site_value
-        else:
-            merged_values[field_name] = site_value if site_value is not None else model_value
+            continue
+        if field_name in FIELDS_CHECKED_FOR_CONFLICTS:
+            note = disagreement_note(field_name, site_value, model_value)
+            if note:
+                conflict_notes.append(note)
+        merged_values[field_name] = site_value if site_value is not None else model_value
 
+    merged_values["states"] = from_site.states or from_model.states
+    merged_values["conflict_notes"] = conflict_notes
     merged_values["source_snippets"] = {**from_model.source_snippets, **from_site.source_snippets}
     return ListingFields(**merged_values)
 

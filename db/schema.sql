@@ -32,6 +32,9 @@ create table if not exists listings (
     city                          text,
     county                        text,
     state                         text,
+    states                        text[] not null default '{}',
+    region                        text,
+    conflict_notes                text[] not null default '{}',
     source_snippets               jsonb not null default '{}'::jsonb,
 
     -- Filled in by the geography step.

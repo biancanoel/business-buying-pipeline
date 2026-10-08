@@ -14,6 +14,12 @@ page count.
 Reading that JSON is much sturdier than parsing the visible cards, whose
 CSS class names are generated and change whenever the site is redeployed.
 
+Long texts are not inline. The page data is a series of rows, and most
+descriptions are stored in their own "text row" (`49:T544,<text>`, where
+544 is the text's length in UTF-8 bytes, in hex). The post then holds a
+reference such as "$49" instead of the description. Strings that really
+start with "$" are escaped as "$$" (Transworld's "$$123,128").
+
 robots.txt (checked October 2026) allows these pages but disallows URLs
 with `?offset=` or `?orderby=`, so pagination uses `?page=N` only.
 """
@@ -40,8 +46,20 @@ STATE_PAGE_SLUGS = {
 
 STATE_CODES_BY_NAME = {"california": "CA", "oregon": "OR", "nevada": "NV"}
 
+ROW_ID_PATTERN = re.compile(r"[0-9a-f]+")
+REFERENCE_PATTERN = re.compile(r"\$([0-9a-f]+)")
+
+# Transworld listings syndicated to BizBen keep these facts in
+# `customAttributes` instead of BizBen's own fields.
+TRANSWORLD_SALES_KEY = "tw_sales"
+TRANSWORLD_SDE_KEY = "tw_seller_discretionary_earnings"
+
 NEXT_DATA_CHUNK_PATTERN = re.compile(r"self\.__next_f\.push\((\[.*?\])\)</script>", re.DOTALL)
 RESULTS_OBJECT_KEY = '"categoryPageResult":'
+
+# Years in business above this are treated as a year, not a count.
+MAX_YEARS_IN_BUSINESS = 150
+EARLIEST_PLAUSIBLE_YEAR = 1800
 
 # How each listing's `locationVisibility` setting limits what we may use.
 # Sellers choose how much of their location to show; we respect that even
@@ -96,14 +114,76 @@ def parse_results_page(html: str) -> BizBenResultsPage:
     except json.JSONDecodeError as error:
         raise BizBenPageFormatError(f"categoryPageResult is not valid JSON: {error}") from error
 
+    if not isinstance(results_object, dict):
+        raise BizBenPageFormatError("categoryPageResult is not an object; this is not a results page")
+
+    text_rows = read_text_rows(payload)
     try:
         return BizBenResultsPage(
-            posts=results_object["results"],
+            posts=[resolve_post_references(post, text_rows) for post in results_object["results"]],
             page_count=results_object["pageCount"],
             total_listing_count=results_object["itemCount"],
         )
     except KeyError as error:
         raise BizBenPageFormatError(f"categoryPageResult is missing {error}") from error
+
+
+def read_text_rows(payload: str) -> dict[str, str]:
+    """Return every text row in the page data, keyed by row id.
+
+    Rows are read in order. A text row (`<id>:T<hex length>,<text>`) is
+    followed directly by the next row, so its length is needed to know
+    where it ends; every other kind of row ends at a newline. Reading in
+    order means text inside a description can never be mistaken for a row.
+    """
+    data = payload.encode("utf-8")
+    text_rows = {}
+    position = 0
+    while position < len(data):
+        colon = data.find(b":", position)
+        if colon == -1:
+            break
+        row_id = data[position:colon].decode("utf-8", errors="replace")
+        is_text_row = data[colon + 1 : colon + 2] == b"T" and ROW_ID_PATTERN.fullmatch(row_id)
+        if is_text_row:
+            comma = data.find(b",", colon)
+            length = int(data[colon + 2 : comma], 16)
+            text_rows[row_id] = data[comma + 1 : comma + 1 + length].decode("utf-8")
+            position = comma + 1 + length
+        else:
+            newline = data.find(b"\n", colon)
+            if newline == -1:
+                break
+            position = newline + 1
+    return text_rows
+
+
+def resolve_reference(value: object, text_rows: dict[str, str]) -> object:
+    """Replace a "$<id>" reference with its text, and undo "$$" escaping."""
+    if not isinstance(value, str):
+        return value
+    if value.startswith("$$"):
+        return value[1:]
+    reference = REFERENCE_PATTERN.fullmatch(value)
+    if reference and reference.group(1) in text_rows:
+        return text_rows[reference.group(1)]
+    return value
+
+
+def resolve_post_references(post: dict, text_rows: dict[str, str]) -> dict:
+    """Return a copy of the post with its references and escapes resolved.
+
+    Covers top-level text fields and the values of `customAttributes`,
+    which is where Transworld listings keep their sales and SDE.
+    """
+    resolved = {key: resolve_reference(value, text_rows) for key, value in post.items()}
+    if isinstance(post.get("customAttributes"), list):
+        resolved["customAttributes"] = [
+            {**attribute, "value": resolve_reference(attribute.get("value"), text_rows)}
+            for attribute in post["customAttributes"]
+            if isinstance(attribute, dict)
+        ]
+    return resolved
 
 
 def results_page_url(state_page_slug: str, page_number: int) -> str:
@@ -150,14 +230,35 @@ def parse_whole_number(value: object) -> int | None:
     return None
 
 
-def parse_year_established(value: object) -> int | None:
-    """Return the year a business was established, if it is plausible."""
-    year = parse_whole_number(value)
-    if year is None:
+def is_years_in_business_count(value: object) -> bool:
+    """Return True when BizBen's "established" value is a count of years.
+
+    The field usually holds a year ("2009"), but some sellers type how many
+    years the business has been running ("5"). A number this small can't
+    be a founding year, so it is read as a count.
+    """
+    number = parse_whole_number(value)
+    return number is not None and 0 < number <= MAX_YEARS_IN_BUSINESS
+
+
+def parse_year_established(value: object, current_year: int | None = None) -> int | None:
+    """Return the year a business was established, if it can be told.
+
+    A count of years ("5") becomes a founding year counted back from
+    `current_year`; it can be a year off, which is fine for a minimum-age
+    filter. Anything that is neither a count nor a plausible year is dropped.
+    """
+    if current_year is None:
+        current_year = datetime.now(UTC).year
+
+    number = parse_whole_number(value)
+    if number is None:
         return None
-    if year < 1800 or year > datetime.now(UTC).year:
-        return None
-    return year
+    if is_years_in_business_count(number):
+        return current_year - number
+    if EARLIEST_PLAUSIBLE_YEAR <= number <= current_year:
+        return number
+    return None
 
 
 def listing_id_from_post(post: dict) -> str:
@@ -210,13 +311,32 @@ def state_from_post(post: dict) -> str | None:
     Most posts have a `state` string. Some have a `states` list instead,
     for businesses offered in several states or relocatable anywhere. A
     business listed in several states has no single location, so it gets
-    no state and the geography step tags it as unknown.
+    no state here; all of them are kept in `states_from_post`.
     """
     if post.get("state"):
         return normalize_state(post["state"])
     states = as_list(post.get("states"))
     if len(states) == 1:
         return normalize_state(states[0])
+    return None
+
+
+def states_from_post(post: dict) -> list[str]:
+    """Return every state the post names, as two-letter codes."""
+    names = as_list(post.get("states")) or as_list(post.get("state"))
+    codes = []
+    for name in names:
+        code = normalize_state(name)
+        if code and code not in codes:
+            codes.append(code)
+    return codes
+
+
+def custom_attribute(post: dict, key: str) -> object:
+    """Return the value of one `customAttributes` entry, or None."""
+    for attribute in post.get("customAttributes") or []:
+        if isinstance(attribute, dict) and attribute.get("key") == key:
+            return attribute.get("value")
     return None
 
 
@@ -240,10 +360,12 @@ def fields_from_post(post: dict) -> ListingFields:
         gross_revenue=(
             parse_dollar_amount(post.get("revenue"))
             or parse_dollar_amount(post.get("revenueInt"))
+            or parse_dollar_amount(custom_attribute(post, TRANSWORLD_SALES_KEY))
         ),
         seller_discretionary_earnings=(
             parse_dollar_amount(post.get("cashFlow"))
             or parse_dollar_amount(post.get("adjustedNet"))
+            or parse_dollar_amount(custom_attribute(post, TRANSWORLD_SDE_KEY))
         ),
         down_payment=parse_dollar_amount(post.get("down")),
         year_established=parse_year_established(post.get("establishedYear")),
@@ -251,6 +373,7 @@ def fields_from_post(post: dict) -> ListingFields:
         city=post.get("city") if visibility in VISIBILITY_SHOWS_CITY else None,
         county=normalize_county(post.get("county")) if visibility in VISIBILITY_SHOWS_COUNTY else None,
         state=state_from_post(post),
+        states=states_from_post(post),
     )
 
 
@@ -260,7 +383,10 @@ def raw_text_from_post(post: dict, fields: ListingFields) -> str:
     The labeled facts come first, then the seller's description, so the
     extractor and a human reader see everything BizBen showed.
     """
-    location_parts = [fields.city, f"{fields.county} County" if fields.county else None, fields.state]
+    state_text = fields.state or " and ".join(fields.states) or None
+    location_parts = [fields.city, f"{fields.county} County" if fields.county else None, state_text]
+    established = post.get("establishedYear")
+    established_label = "Years in business" if is_years_in_business_count(established) else "Established"
     labeled_facts = [
         ("Title", post.get("title")),
         ("Business types", fields.business_type),
@@ -270,10 +396,13 @@ def raw_text_from_post(post: dict, fields: ListingFields) -> str:
         ("Cash flow", post.get("cashFlow")),
         ("Adjusted net", post.get("adjustedNet")),
         ("Down payment", post.get("down")),
-        ("Established", post.get("establishedYear")),
+        (established_label, established),
         ("Employees", post.get("employees")),
         ("Reason for sale", post.get("saleReason")),
     ]
+    for attribute in post.get("customAttributes") or []:
+        if isinstance(attribute, dict):
+            labeled_facts.append((attribute.get("displayName") or attribute.get("key"), attribute.get("value")))
 
     lines = []
     for label, value in labeled_facts:

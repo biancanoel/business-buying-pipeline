@@ -96,7 +96,26 @@ class ListingFields(BaseModel):
 
     city: str | None = None
     county: str | None = None
-    state: str | None = None
+    state: str | None = Field(
+        default=None,
+        description="Two-letter code, only when the listing names exactly one state.",
+    )
+    states: list[str] = Field(
+        default_factory=list,
+        description="Every state the listing names, for businesses offered in several.",
+    )
+    region: str | None = Field(
+        default=None,
+        description="A named region such as 'Bay Area', only when the listing states one.",
+    )
+
+    conflict_notes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Facts the listing states in two different ways (for example two "
+            "revenue figures). Empty when nothing conflicts."
+        ),
+    )
 
     source_snippets: dict[str, str] = Field(
         default_factory=dict,

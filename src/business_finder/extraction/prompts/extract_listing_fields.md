@@ -35,7 +35,12 @@ Fill whichever of the two the listing states. Both may be filled, or neither.
 ## Location
 
 - city, county, state: only as stated in the listing. Write county without the word "County" ("Sonoma", not "Sonoma County"). Write state as a two-letter code ("CA").
+- region: only when the listing names a region, such as "Bay Area", "North Bay" or "Central Valley". Copy it as written. If no region is named, return null; do not work one out from a city or county.
 - Do not fill in a county or state from your own knowledge of where a city is.
+
+## Conflicting facts
+
+Sometimes a listing states the same fact two different ways: the listing details say revenue is $1,500,000 but the description says "annual sales of approximately $800,000", or the location says one county and the description another. When that happens, return null for that field and add one short note to conflict_notes naming both values, for example "gross_revenue: listing details say $1,500,000, description says about $800,000". When nothing conflicts, conflict_notes is an empty list. A rounded figure that matches ("about $1.5M" and "$1,498,000") is not a conflict.
 
 ## employee_count
 
