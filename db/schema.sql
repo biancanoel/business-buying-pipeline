@@ -48,6 +48,8 @@ create table if not exists listings (
     last_seen_at                  timestamptz not null default now(),
     status                        text not null default 'new'
                                       check (status in ('new', 'interested', 'passed', 'contacted')),
+    -- When Claude read the listing; null until then.
+    extracted_at                  timestamptz,
 
     -- Deduplication: a listing is the same listing if the site's ID matches.
     unique (source, source_listing_id)
@@ -92,6 +94,10 @@ create table if not exists matches (
 create index if not exists matches_not_yet_notified
     on matches (saved_search_id)
     where notified_at is null;
+
+-- Columns added after the first version. "if not exists" makes this file
+-- safe to run again on a database created from an older version.
+alter table listings add column if not exists extracted_at timestamptz;
 
 -- Supabase publishes every table through its web API to anyone with the
 -- project's public key. The pipeline connects to the database directly, as

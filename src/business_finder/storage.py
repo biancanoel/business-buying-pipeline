@@ -151,6 +151,27 @@ class Storage:
                 (seen_at, source.value, list(source_listing_ids)),
             )
 
+    def listings_awaiting_extraction(self) -> list[Listing]:
+        """Return every stored listing Claude has not read yet."""
+        rows = self.connection.execute(
+            "select * from listings where extracted_at is null order by first_seen_at"
+        ).fetchall()
+        return [listing_from_row(row) for row in rows]
+
+    def save_extraction(self, listing: Listing) -> None:
+        """Store a listing's fields and the time Claude read it."""
+        row = listing_to_row(listing)
+        columns = list(ListingFields.model_fields) + ["extracted_at"]
+        statement = sql.SQL("update listings set {updates} where id = {id}").format(
+            updates=sql.SQL(", ").join(
+                sql.SQL("{column} = {value}").format(column=sql.Identifier(column), value=sql.Placeholder(column))
+                for column in columns
+            ),
+            id=sql.Placeholder("id"),
+        )
+        with self.connection.transaction():
+            self.connection.execute(statement, values_for_sql({column: row[column] for column in columns + ["id"]}))
+
     def load_listings(self) -> list[Listing]:
         """Return every stored listing."""
         rows = self.connection.execute("select * from listings").fetchall()

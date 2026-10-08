@@ -1,14 +1,14 @@
 """Command-line entry point. Parses arguments and prints; the work happens in business_finder.
 
-Run with the API key loaded from .env, for example:
-    uv run --env-file .env python cli.py evaluate
+Run with the API key and database URL loaded from .env, for example:
+    uv run --env-file .env python cli.py run
 """
 
 import argparse
 import json
 from pathlib import Path
 
-from business_finder.config import ExtractionSettings
+from business_finder.config import ExtractionSettings, ingest_states_from_environment
 from business_finder.evaluation import (
     build_evaluation_set,
     format_report,
@@ -17,8 +17,38 @@ from business_finder.evaluation import (
     save_evaluation_set,
 )
 from business_finder.extraction import make_extractor
+from business_finder.pipeline import load_saved_search_files, run_pipeline
+from business_finder.sources.bizben import BizBenAdapter
+from business_finder.sources.polite_http import PoliteHttpClient
+from business_finder.storage import Storage
 
 DEFAULT_EVALUATION_DIR = Path("data/evaluation")
+SAVED_SEARCHES_DIR = Path("saved_searches")
+
+
+def run_command(arguments: argparse.Namespace) -> None:
+    """Fetch listings, store new ones and have Claude read them."""
+    http_client = PoliteHttpClient()
+    storage = Storage.connect()
+    try:
+        summary = run_pipeline(
+            sources=[BizBenAdapter(http_client, target_states=ingest_states_from_environment())],
+            extractor=make_extractor(ExtractionSettings.from_environment()),
+            storage=storage,
+            saved_searches=load_saved_search_files(SAVED_SEARCHES_DIR),
+            report=print,
+        )
+    finally:
+        storage.close()
+        http_client.close()
+
+    print()
+    print(f"Fetched {summary.fetched} listings: {summary.new} new, {summary.seen_again} already stored.")
+    print(f"Claude read {summary.read_by_claude}; {summary.skipped_over_price_limit} skipped as over the price limit.")
+    if summary.failed_readings:
+        print(f"{len(summary.failed_readings)} readings failed and will be retried next run:")
+        for failure in summary.failed_readings:
+            print(f"  {failure}")
 
 
 def build_eval_set_command(arguments: argparse.Namespace) -> None:
@@ -43,6 +73,9 @@ def evaluate_command(arguments: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Business-for-Sale Finder")
     commands = parser.add_subparsers(dest="command", required=True)
+
+    run = commands.add_parser("run", help="Fetch listings, store new ones and have Claude read them")
+    run.set_defaults(handler=run_command)
 
     build = commands.add_parser("build-eval-set", help="Make the evaluation set from reviewed listings")
     build.add_argument("--candidates", type=Path, default=DEFAULT_EVALUATION_DIR / "candidates.json")

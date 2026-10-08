@@ -442,6 +442,8 @@ def is_active_post(post: dict) -> bool:
 class BizBenAdapter:
     """Collects every active BizBen listing in the target states."""
 
+    source = ListingSource.BIZBEN
+
     def __init__(self, http_client: PoliteHttpClient, target_states: list[str]) -> None:
         """Set up the adapter.
 

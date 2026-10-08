@@ -162,6 +162,14 @@ class Listing(BaseModel):
     first_seen_at: datetime = Field(default_factory=utc_now)
     last_seen_at: datetime = Field(default_factory=utc_now)
     status: ListingStatus = ListingStatus.NEW
+    extracted_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When Claude read the listing. None means not yet: skipped for "
+            "price, failed, or not reached before a run stopped. The next "
+            "run catches these up."
+        ),
+    )
 
 
 class SavedSearch(BaseModel):

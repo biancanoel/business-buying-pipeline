@@ -7,6 +7,10 @@ reads its own key from the environment, so it never passes through our code.
 import os
 from dataclasses import dataclass
 
+# States whose listings are collected. Ingestion is broad on purpose; the
+# saved searches' distance limits make the precise cut.
+DEFAULT_INGEST_STATES = "CA,OR,NV"
+
 DEFAULT_EXTRACTION_PROVIDER = "anthropic"
 DEFAULT_EXTRACTION_MODEL = "claude-haiku-5-5"
 DEFAULT_EXTRACTION_EFFORT = "low"
@@ -32,3 +36,9 @@ class ExtractionSettings:
             model=os.environ.get("BUSINESS_FINDER_EXTRACTION_MODEL", DEFAULT_EXTRACTION_MODEL),
             effort=os.environ.get("BUSINESS_FINDER_EXTRACTION_EFFORT", DEFAULT_EXTRACTION_EFFORT),
         )
+
+
+def ingest_states_from_environment() -> list[str]:
+    """Return the two-letter codes of the states to collect listings from."""
+    text = os.environ.get("BUSINESS_FINDER_INGEST_STATES", DEFAULT_INGEST_STATES)
+    return [code.strip().upper() for code in text.split(",") if code.strip()]
