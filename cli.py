@@ -8,7 +8,11 @@ import argparse
 import json
 from pathlib import Path
 
-from business_finder.config import ExtractionSettings, ingest_states_from_environment
+from business_finder.config import (
+    ExtractionSettings,
+    approximate_margin_from_environment,
+    ingest_states_from_environment,
+)
 from business_finder.evaluation import (
     build_evaluation_set,
     format_report,
@@ -17,6 +21,7 @@ from business_finder.evaluation import (
     save_evaluation_set,
 )
 from business_finder.extraction import make_extractor
+from business_finder.geography import Gazetteer
 from business_finder.pipeline import load_saved_search_files, run_pipeline
 from business_finder.sources.bizben import BizBenAdapter
 from business_finder.sources.polite_http import PoliteHttpClient
@@ -37,6 +42,8 @@ def run_command(arguments: argparse.Namespace) -> None:
             storage=storage,
             saved_searches=load_saved_search_files(SAVED_SEARCHES_DIR),
             report=print,
+            gazetteer=Gazetteer.load(),
+            approximate_margin_miles=approximate_margin_from_environment(),
         )
     finally:
         storage.close()
@@ -44,7 +51,10 @@ def run_command(arguments: argparse.Namespace) -> None:
 
     print()
     print(f"Fetched {summary.fetched} listings: {summary.new} new, {summary.seen_again} already stored.")
-    print(f"Claude read {summary.read_by_claude}; {summary.skipped_over_price_limit} skipped as over the price limit.")
+    print(
+        f"Claude read {summary.read_by_claude}; skipped {summary.skipped_over_price_limit} over the price limit "
+        f"and {summary.skipped_out_of_reach} out of reach (both are caught up if a search widens)."
+    )
     if summary.failed_readings:
         print(f"{len(summary.failed_readings)} readings failed and will be retried next run:")
         for failure in summary.failed_readings:

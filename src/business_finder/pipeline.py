@@ -30,6 +30,7 @@ from business_finder.extraction.extractor import (
     merge_fields,
     needs_model_extraction,
 )
+from business_finder.geography import Gazetteer, listings_not_out_of_reach, search_areas_for
 from business_finder.models import Listing, ListingFields, ListingSource, SavedSearch
 from business_finder.sources import SourceAdapter
 from business_finder.storage import Storage
@@ -55,6 +56,7 @@ class RunSummary:
     seen_again: int = 0
     read_by_claude: int = 0
     skipped_over_price_limit: int = 0
+    skipped_out_of_reach: int = 0
     failed_readings: list[str] = field(default_factory=list)
 
 
@@ -126,8 +128,15 @@ def run_pipeline(
     storage: Storage,
     saved_searches: list[SavedSearch],
     report: Callable[[str], None] = lambda message: None,
+    gazetteer: Gazetteer | None = None,
+    approximate_margin_miles: float = 50,
 ) -> RunSummary:
-    """Run steps 1 to 4 once. `report` receives progress messages."""
+    """Run steps 1 to 4 once. `report` receives progress messages.
+
+    With a `gazetteer`, listings clearly out of reach of every saved search
+    are not sent to Claude; they stay unread and are caught up if a search's
+    area widens.
+    """
     started_at = datetime.now(UTC)
     summary = RunSummary()
 
@@ -150,9 +159,17 @@ def run_pipeline(
 
     price_ceiling = extraction_price_ceiling(saved_searches)
     awaiting = storage.listings_awaiting_extraction()
-    to_read = listings_to_extract(awaiting, price_ceiling)
-    summary.skipped_over_price_limit = len(awaiting) - len(to_read)
-    report(f"Claude is reading {len(to_read)} listings ({summary.skipped_over_price_limit} over the price limit skipped)…")
+    within_price = listings_to_extract(awaiting, price_ceiling)
+    to_read = within_price
+    if gazetteer is not None:
+        areas = search_areas_for(saved_searches, gazetteer)
+        to_read = listings_not_out_of_reach(within_price, gazetteer, areas, approximate_margin_miles)
+    summary.skipped_over_price_limit = len(awaiting) - len(within_price)
+    summary.skipped_out_of_reach = len(within_price) - len(to_read)
+    report(
+        f"Claude is reading {len(to_read)} listings "
+        f"(skipped: {summary.skipped_over_price_limit} over the price limit, {summary.skipped_out_of_reach} out of reach)…"
+    )
 
     for number, listing in enumerate(to_read, start=1):
         try:

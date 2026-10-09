@@ -5,11 +5,14 @@ import pytest
 from business_finder.geography import (
     Gazetteer,
     GeoPoint,
+    SearchArea,
     distance_miles,
     is_within_reach,
+    listings_not_out_of_reach,
     locate,
+    search_areas_for,
 )
-from business_finder.models import ListingFields, LocationPrecision
+from business_finder.models import Listing, ListingFields, ListingSource, LocationPrecision, SavedSearch
 
 # Real rows from the Census 2024 Gazetteer files, in their original format.
 PLACES_TEXT = """USPS\tGEOID\tANSICODE\tNAME\tLSAD\tFUNCSTAT\tALAND\tAWATER\tALAND_SQMI\tAWATER_SQMI\tINTPTLAT\tINTPTLONG
@@ -103,3 +106,74 @@ def test_approximate_locations_get_a_margin_beyond_the_limit(precision, miles_aw
 
 def test_unknown_location_is_neither_inside_nor_outside():
     assert is_within_reach(LocationPrecision.UNKNOWN, None, max_miles=250, approximate_margin_miles=50) is None
+
+
+
+# --- Skipping listings that are out of reach of every saved search --------------
+
+# Real Census 2024 rows for the location-rule tests.
+REACH_PLACES_TEXT = """USPS\tGEOID\tANSICODE\tNAME\tLSAD\tFUNCSTAT\tALAND\tAWATER\tALAND_SQMI\tAWATER_SQMI\tINTPTLAT\tINTPTLONG
+CA\t0656784\t02411407\tPetaluma city\t25\tA\t37333943\t277684\t14.415\t0.107\t38.242251\t-122.628769
+NV\t3240000\t02411630\tLas Vegas city\t25\tA\t367428873\t138524\t141.865\t0.053\t36.233499\t-115.264037
+NV\t3260600\t02410923\tReno city\t25\tA\t282280412\t7338575\t108.989\t2.833\t39.549097\t-119.849907
+"""
+REACH_COUNTIES_TEXT = """USPS\tGEOID\tANSICODE\tNAME\tALAND\tAWATER\tALAND_SQMI\tAWATER_SQMI\tINTPTLAT\tINTPTLONG
+NV\t32003\t00863600\tClark County\t20439308560\t438384090\t7891.661\t169.261\t36.21413\t-115.014398
+"""
+LAS_VEGAS = GeoPoint(latitude=36.233499, longitude=-115.264037)
+
+
+@pytest.fixture
+def reach_gazetteer() -> Gazetteer:
+    return Gazetteer.from_census_text(places_text=REACH_PLACES_TEXT, counties_text=REACH_COUNTIES_TEXT)
+
+
+def make_located_listing(source_listing_id: str, **location) -> Listing:
+    return Listing(
+        source=ListingSource.BIZBEN,
+        source_listing_id=source_listing_id,
+        url=f"https://example.com/{source_listing_id}",
+        raw_text="Fake listing",
+        fields=ListingFields(**location),
+    )
+
+
+def test_search_areas_are_centered_on_each_search_target_city(reach_gazetteer):
+    lucie = SavedSearch(
+        name="Test search", business_types=["residential cleaning"],
+        target_city="Petaluma", target_state="CA", max_distance_miles=250,
+    )
+
+    assert search_areas_for([lucie], reach_gazetteer) == [SearchArea(center=PETALUMA, max_miles=250)]
+
+
+def test_listings_out_of_reach_of_every_search_are_dropped_and_the_rest_kept(reach_gazetteer):
+    las_vegas = make_located_listing("las-vegas", city="Las Vegas", county="Clark", state="NV")
+    clark_county = make_located_listing("clark-county", county="Clark", state="NV")
+    reno = make_located_listing("reno", city="Reno", state="NV")
+    state_only = make_located_listing("state-only", state="NV")
+    areas = [SearchArea(center=PETALUMA, max_miles=250)]
+
+    kept = listings_not_out_of_reach(
+        [las_vegas, clark_county, reno, state_only], reach_gazetteer, areas, approximate_margin_miles=50
+    )
+
+    assert [listing.source_listing_id for listing in kept] == ["reno", "state-only"]
+
+
+def test_a_listing_within_any_one_search_area_is_kept(reach_gazetteer):
+    las_vegas = make_located_listing("las-vegas", city="Las Vegas", state="NV")
+    areas = [SearchArea(center=PETALUMA, max_miles=250), SearchArea(center=LAS_VEGAS, max_miles=50)]
+
+    kept = listings_not_out_of_reach([las_vegas], reach_gazetteer, areas, approximate_margin_miles=50)
+
+    assert kept == [las_vegas]
+
+
+def test_a_search_without_a_distance_limit_keeps_every_listing(reach_gazetteer):
+    las_vegas = make_located_listing("las-vegas", city="Las Vegas", state="NV")
+    areas = [SearchArea(center=PETALUMA, max_miles=None)]
+
+    kept = listings_not_out_of_reach([las_vegas], reach_gazetteer, areas, approximate_margin_miles=50)
+
+    assert kept == [las_vegas]

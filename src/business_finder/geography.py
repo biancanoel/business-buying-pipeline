@@ -19,7 +19,7 @@ import math
 from dataclasses import dataclass
 from importlib import resources
 
-from business_finder.models import ListingFields, LocationPrecision
+from business_finder.models import Listing, ListingFields, LocationPrecision, SavedSearch
 
 DATA_PACKAGE = "business_finder.data"
 PLACES_FILE = "census_2024_place_ca_or_nv.txt"
@@ -71,6 +71,17 @@ class Location:
 
 
 UNKNOWN_LOCATION = Location(point=None, precision=LocationPrecision.UNKNOWN)
+
+
+@dataclass(frozen=True)
+class SearchArea:
+    """The area a saved search covers: within `max_miles` of its target city.
+
+    `max_miles` is None for a search with no distance limit.
+    """
+
+    center: GeoPoint
+    max_miles: float | None
 
 
 def distance_miles(first: GeoPoint, second: GeoPoint) -> float:
@@ -193,3 +204,59 @@ def is_within_reach(
     if precision == LocationPrecision.APPROXIMATE:
         return miles_away <= max_miles + approximate_margin_miles
     return miles_away <= max_miles
+
+
+# --- Skipping listings that are out of reach of every saved search -----------------
+
+
+def search_areas_for(saved_searches: list[SavedSearch], gazetteer: Gazetteer) -> list[SearchArea]:
+    """Return the area each saved search covers, centered on its target city.
+
+    Fails loudly if a target city is not in the Census data, because every
+    distance for that search would otherwise be wrong.
+    """
+    areas = []
+    for saved_search in saved_searches:
+        center = gazetteer.city(saved_search.target_city, saved_search.target_state)
+        if center is None:
+            raise ValueError(
+                f"Target city {saved_search.target_city}, {saved_search.target_state} of saved search "
+                f"{saved_search.name!r} is not in the Census data"
+            )
+        areas.append(SearchArea(center=center, max_miles=saved_search.max_distance_miles))
+    return areas
+
+
+def is_out_of_every_search_area(location: Location, areas: list[SearchArea], approximate_margin_miles: float) -> bool:
+    """Return True only when the location is clearly outside every search's area.
+
+    An unknown location, a search with no distance limit, or no searches at
+    all never count as out of reach.
+    """
+    if not areas:
+        return False
+    for area in areas:
+        if area.max_miles is None:
+            return False
+        miles_away = distance_miles(area.center, location.point) if location.point else None
+        if is_within_reach(location.precision, miles_away, area.max_miles, approximate_margin_miles) is not False:
+            return False
+    return True
+
+
+def listings_not_out_of_reach(
+    listings: list[Listing],
+    gazetteer: Gazetteer,
+    areas: list[SearchArea],
+    approximate_margin_miles: float,
+) -> list[Listing]:
+    """Keep the listings that are, or might be, within reach of at least one saved search.
+
+    Uses the listing's own location fields, so it works before Claude has
+    read the listing.
+    """
+    return [
+        listing
+        for listing in listings
+        if not is_out_of_every_search_area(locate(listing.fields, gazetteer), areas, approximate_margin_miles)
+    ]
