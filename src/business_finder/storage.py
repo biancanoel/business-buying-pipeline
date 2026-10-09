@@ -94,19 +94,35 @@ class Storage:
     """Reads and writes listings and saved searches.
 
     Each method commits its own work, so a crash part-way through a weekly
-    run keeps everything saved up to that point.
+    run keeps everything saved up to that point. This relies on the
+    connection being in autocommit mode: otherwise the first read opens a
+    transaction that never ends, every later `transaction()` block only
+    nests inside it, and nothing is saved when the connection closes.
     """
 
-    def __init__(self, connection: psycopg.Connection) -> None:
+    def __init__(self, connection: psycopg.Connection, database_url: str | None = None, schema: str | None = None) -> None:
         self.connection = connection
+        self.database_url = database_url
+        self.schema = schema
 
     @classmethod
-    def connect(cls, database_url: str | None = None) -> "Storage":
-        """Open a connection using DATABASE_URL from the environment."""
+    def connect(cls, database_url: str | None = None, schema: str | None = None) -> "Storage":
+        """Open a connection using DATABASE_URL from the environment.
+
+        `schema` points the connection at a different set of tables; the
+        database tests use it to work in their own schema.
+        """
         database_url = database_url or os.environ.get(DATABASE_URL_ENVIRONMENT_VARIABLE)
         if not database_url:
             raise RuntimeError(f"{DATABASE_URL_ENVIRONMENT_VARIABLE} is not set")
-        return cls(psycopg.connect(database_url, row_factory=dict_row))
+        storage = cls(psycopg.connect(database_url, row_factory=dict_row, autocommit=True), database_url, schema)
+        storage.use_schema(storage.connection)
+        return storage
+
+    def use_schema(self, connection: psycopg.Connection) -> None:
+        """Point a connection at this storage's schema, if one was given."""
+        if self.schema:
+            connection.execute(sql.SQL("set search_path to {}").format(sql.Identifier(self.schema)))
 
     def close(self) -> None:
         self.connection.close()
@@ -142,6 +158,20 @@ class Storage:
                 cursor = self.connection.execute(statement, row)
                 inserted_count += cursor.rowcount
         return inserted_count
+
+    def count_saved_from_fresh_connection(self, source: ListingSource, source_listing_ids: Iterable[str]) -> int:
+        """Count how many of these listings a brand-new connection can see.
+
+        A separate connection only sees work that was really committed, so
+        this catches saves that silently never reached the database.
+        """
+        with psycopg.connect(self.database_url, autocommit=True) as fresh_connection:
+            self.use_schema(fresh_connection)
+            row = fresh_connection.execute(
+                "select count(*) from listings where source = %s and source_listing_id = any(%s)",
+                (source.value, list(source_listing_ids)),
+            ).fetchone()
+        return row[0]
 
     def mark_listings_seen(self, source: ListingSource, source_listing_ids: Iterable[str], seen_at: datetime) -> None:
         """Record that these stored listings were still on the site at `seen_at`."""

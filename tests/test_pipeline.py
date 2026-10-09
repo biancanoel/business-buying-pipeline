@@ -2,8 +2,16 @@
 
 from datetime import UTC, datetime
 
+import pytest
+
 from business_finder.models import Listing, ListingFields, ListingSource
-from business_finder.pipeline import listings_to_extract, split_new_and_known, with_extraction
+from business_finder.pipeline import (
+    ListingsNotSavedError,
+    listings_to_extract,
+    split_new_and_known,
+    stop_if_not_saved,
+    with_extraction,
+)
 
 READ_AT = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 
@@ -51,3 +59,12 @@ def test_applying_claudes_reading_keeps_site_values_fills_gaps_and_marks_the_lis
     assert updated.fields.gross_revenue == 1_250_000
     assert updated.fields.requires_contractor_license is False
     assert updated.extracted_at == READ_AT
+
+
+def test_run_stops_when_new_listings_are_missing_from_the_database():
+    with pytest.raises(ListingsNotSavedError, match="2 of 5"):
+        stop_if_not_saved(source=ListingSource.BIZBEN, expected=5, found=3)
+
+
+def test_run_continues_when_every_new_listing_is_saved():
+    stop_if_not_saved(source=ListingSource.BIZBEN, expected=5, found=5)

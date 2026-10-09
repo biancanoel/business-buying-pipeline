@@ -15,4 +15,9 @@ wheels/
 !.env.example
 
 # Local data: downloaded pages, evaluation listings and labels
-data/
+/data/
+
+# Agent skills installed locally with `npx skills add` (not committed)
+.agents/
+.claude/skills/
+skills-lock.json

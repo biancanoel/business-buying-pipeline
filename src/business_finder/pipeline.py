@@ -30,12 +30,20 @@ from business_finder.extraction.extractor import (
     merge_fields,
     needs_model_extraction,
 )
-from business_finder.models import Listing, ListingFields, SavedSearch
+from business_finder.models import Listing, ListingFields, ListingSource, SavedSearch
 from business_finder.sources import SourceAdapter
 from business_finder.storage import Storage
 
 # How often to report progress while Claude reads listings.
 PROGRESS_EVERY_N_LISTINGS = 25
+
+
+class ListingsNotSavedError(Exception):
+    """Raised when new listings are not in the database after being saved.
+
+    The run stops straight away, before any time or money is spent having
+    Claude read listings that would not be kept.
+    """
 
 
 @dataclass
@@ -84,6 +92,16 @@ def with_extraction(listing: Listing, claudes_reading: ListingFields, read_at: d
     )
 
 
+def stop_if_not_saved(source: ListingSource, expected: int, found: int) -> None:
+    """Stop the run if fewer new listings are in the database than were saved."""
+    if found < expected:
+        missing = expected - found
+        raise ListingsNotSavedError(
+            f"{missing} of {expected} new {source.value} listings were not in the database after saving; "
+            "stopping before Claude reads anything."
+        )
+
+
 # --- Saved searches ----------------------------------------------------------------
 
 
@@ -122,6 +140,9 @@ def run_pipeline(
         new_listings, known_ids_seen = split_new_and_known(fetched, storage.known_source_listing_ids(source.source))
         storage.mark_listings_seen(source.source, known_ids_seen, started_at)
         inserted = storage.insert_new_listings(new_listings)
+        new_ids = [listing.source_listing_id for listing in new_listings]
+        found = storage.count_saved_from_fresh_connection(source.source, new_ids)
+        stop_if_not_saved(source.source, expected=len(new_ids), found=found)
         summary.fetched += len(fetched)
         summary.new += inserted
         summary.seen_again += len(known_ids_seen)
