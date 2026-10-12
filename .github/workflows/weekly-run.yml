@@ -1,0 +1,47 @@
+# The weekly run: fetch listings, read new ones, match, and post to Slack.
+#
+# Runs Mondays at 17:00 UTC: 10:00 Pacific in summer, 9:00 in winter (GitHub
+# schedules use UTC; the exact hour doesn't matter). It can also be started
+# by hand from the Actions tab ("Run workflow").
+#
+# Secrets (Settings > Secrets and variables > Actions): ANTHROPIC_API_KEY,
+# DATABASE_URL and SLACK_WEBHOOK_URL. They are never printed in logs.
+
+name: Weekly run
+
+on:
+  schedule:
+    - cron: "0 17 * * 1"
+  workflow_dispatch:
+    inputs:
+      notify:
+        description: "Post new matches to Slack"
+        type: boolean
+        default: true
+
+# Never let two runs overlap; a second one waits for the first.
+concurrency:
+  group: weekly-run
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Run the pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          NOTIFY: ${{ github.event_name == 'schedule' || inputs.notify }}
+        run: |
+          if [ "$NOTIFY" = "true" ]; then
+            uv run python cli.py run
+          else
+            uv run python cli.py run --no-notify
+          fi
