@@ -180,3 +180,19 @@ def test_unsent_matches_that_no_longer_qualify_are_removed_and_sent_ones_kept(te
         assert [match.listing_id for match in storage.load_matches(saved_search.id)] == [sent_listing.id]
     finally:
         storage.close()
+
+
+def test_matches_marked_as_sent_are_no_longer_listed_as_unsent(test_schema):
+    storage = Storage.connect(schema=test_schema)
+    try:
+        listing, saved_search = store_listing_and_search(storage)
+        storage.save_match(Match(saved_search_id=saved_search.id, listing_id=listing.id, match_summary="Maid service."))
+        unsent_before = storage.load_unsent_matches(saved_search.id)
+
+        storage.mark_matches_sent(saved_search.id, [listing.id], sent_at=datetime(2026, 10, 12, 9, 0, tzinfo=UTC))
+
+        assert [match.listing_id for match in unsent_before] == [listing.id]
+        assert storage.load_unsent_matches(saved_search.id) == []
+        assert storage.load_matches(saved_search.id)[0].notified_at == datetime(2026, 10, 12, 9, 0, tzinfo=UTC)
+    finally:
+        storage.close()

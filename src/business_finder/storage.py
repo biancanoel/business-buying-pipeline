@@ -297,3 +297,19 @@ class Storage:
                 "delete from matches where saved_search_id = %s and notified_at is null and not (listing_id = any(%s))",
                 (saved_search_id, list(still_matching_listing_ids)),
             )
+
+    def load_unsent_matches(self, saved_search_id: UUID) -> list[Match]:
+        """Return a search's matches that have not been sent to the buyer yet, oldest first."""
+        rows = self.connection.execute(
+            "select * from matches where saved_search_id = %s and notified_at is null order by matched_at",
+            (saved_search_id,),
+        ).fetchall()
+        return [Match(**row) for row in rows]
+
+    def mark_matches_sent(self, saved_search_id: UUID, listing_ids: list[UUID], sent_at: datetime) -> None:
+        """Record that these matches were sent, so they are never announced again."""
+        with self.connection.transaction():
+            self.connection.execute(
+                "update matches set notified_at = %s where saved_search_id = %s and listing_id = any(%s)",
+                (sent_at, saved_search_id, listing_ids),
+            )

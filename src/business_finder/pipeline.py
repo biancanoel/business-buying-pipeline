@@ -15,7 +15,8 @@ Steps, in order:
    location checks first, then a model's call on business type for the
    listings those checks keep (judged once per listing and search).
 
-Notifications come later.
+6. Post each saved search's new matches to Slack in one message (or a
+   "no new matches" note), then mark them as sent.
 
 The decisions are small pure functions (tested); `run_pipeline` only calls
 the sources, Claude and the database in order, and is checked by real runs.
@@ -23,6 +24,7 @@ the sources, Claude and the database in order, and is checked by real runs.
 
 import json
 from collections.abc import Callable, Iterable
+from typing import Protocol
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,7 +37,14 @@ from business_finder.extraction.extractor import (
     needs_model_extraction,
 )
 from business_finder.extraction.business_type_judge import BusinessTypeJudge
-from business_finder.geography import Gazetteer, listings_not_out_of_reach, locate, search_areas_for, within_search_area
+from business_finder.geography import (
+    Gazetteer,
+    distance_miles,
+    listings_not_out_of_reach,
+    locate,
+    search_areas_for,
+    within_search_area,
+)
 from business_finder.matching import (
     business_criteria_fingerprint,
     check_criteria,
@@ -43,6 +52,7 @@ from business_finder.matching import (
     listings_needing_judgment,
 )
 from business_finder.models import BusinessTypeJudgment, Listing, ListingFields, ListingSource, SavedSearch
+from business_finder.notifiers.slack import MatchDetails, weekly_message
 from business_finder.sources import SourceAdapter
 from business_finder.storage import Storage
 
@@ -275,3 +285,48 @@ def match_listings(
         report(f"  {summary.confirmed_matches} confirmed matches, {summary.possible_matches} possible matches")
         summaries.append(summary)
     return summaries
+
+
+# --- Step 6: notifications ---------------------------------------------------------------
+
+
+class Notifier(Protocol):
+    def post(self, message: dict) -> None: ...
+
+
+def notify_matches(
+    storage: Storage,
+    notifier: Notifier,
+    saved_searches: list[SavedSearch],
+    gazetteer: Gazetteer,
+    report: Callable[[str], None] = lambda message: None,
+) -> None:
+    """Post each search's unsent matches, then mark them as sent.
+
+    Matches are only marked as sent after Slack accepts the message, so a
+    failed post is retried on the next run.
+    """
+    listings_by_id = {listing.id: listing for listing in storage.load_listings()}
+    for saved_search in saved_searches:
+        area = search_areas_for([saved_search], gazetteer)[0]
+        unsent = storage.load_unsent_matches(saved_search.id)
+        judgments = storage.load_judgments(saved_search.id)
+
+        entries = []
+        for match in unsent:
+            listing = listings_by_id[match.listing_id]
+            location = locate(listing.fields, gazetteer)
+            judgment = judgments.get(listing.id)
+            entries.append(
+                MatchDetails(
+                    match=match,
+                    listing=listing,
+                    matched_type=judgment.matched_type if judgment else None,
+                    miles_away=distance_miles(area.center, location.point) if location.point else None,
+                    precision=location.precision,
+                )
+            )
+
+        notifier.post(weekly_message(saved_search, entries, target_city=saved_search.target_city))
+        storage.mark_matches_sent(saved_search.id, [match.listing_id for match in unsent], sent_at=datetime.now(UTC))
+        report(f"{saved_search.name}: posted {len(unsent)} new matches to Slack")

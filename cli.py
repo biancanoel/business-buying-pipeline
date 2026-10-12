@@ -23,7 +23,8 @@ from business_finder.evaluation import (
 from business_finder.extraction import make_extractor
 from business_finder.extraction.business_type_judge import ClaudeBusinessTypeJudge
 from business_finder.geography import Gazetteer
-from business_finder.pipeline import load_saved_search_files, match_listings, run_pipeline
+from business_finder.notifiers.slack import SlackWebhookNotifier
+from business_finder.pipeline import load_saved_search_files, match_listings, notify_matches, run_pipeline
 from business_finder.sources.bizben import BizBenAdapter
 from business_finder.sources.polite_http import PoliteHttpClient
 from business_finder.storage import Storage
@@ -54,6 +55,14 @@ def run_command(arguments: argparse.Namespace) -> None:
             approximate_margin_miles=approximate_margin_from_environment(),
             report=print,
         )
+        if arguments.notify:
+            notify_matches(
+                storage=storage,
+                notifier=SlackWebhookNotifier.from_environment(),
+                saved_searches=load_saved_search_files(SAVED_SEARCHES_DIR),
+                gazetteer=Gazetteer.load(),
+                report=print,
+            )
     finally:
         storage.close()
         http_client.close()
@@ -89,6 +98,21 @@ def match_command(arguments: argparse.Namespace) -> None:
     finally:
         storage.close()
     print_match_summaries(summaries)
+
+
+def notify_command(arguments: argparse.Namespace) -> None:
+    """Post each saved search's unsent matches to Slack."""
+    storage = Storage.connect()
+    try:
+        notify_matches(
+            storage=storage,
+            notifier=SlackWebhookNotifier.from_environment(),
+            saved_searches=load_saved_search_files(SAVED_SEARCHES_DIR),
+            gazetteer=Gazetteer.load(),
+            report=print,
+        )
+    finally:
+        storage.close()
 
 
 def print_match_summaries(summaries) -> None:
@@ -127,8 +151,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Business-for-Sale Finder")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    run = commands.add_parser("run", help="Fetch listings, store new ones, have Claude read them, and match")
+    run = commands.add_parser("run", help="Fetch listings, read new ones, match, and post new matches to Slack")
+    run.add_argument("--no-notify", dest="notify", action="store_false", help="Skip posting to Slack")
     run.set_defaults(handler=run_command)
+
+    notify = commands.add_parser("notify", help="Post unsent matches to Slack")
+    notify.set_defaults(handler=notify_command)
 
     match = commands.add_parser("match", help="Match stored listings against the saved searches (no fetching)")
     match.set_defaults(handler=match_command)
