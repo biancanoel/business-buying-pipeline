@@ -166,8 +166,9 @@ def run_pipeline(
 
     for source in sources:
         report(f"Fetching {source.source.value} listings…")
-        fetched = list(source.fetch_listings())
-        new_listings, known_ids_seen = split_new_and_known(fetched, storage.known_source_listing_ids(source.source))
+        known_ids = storage.known_source_listing_ids(source.source)
+        fetched = list(source.fetch_listings(known_ids))
+        new_listings, known_ids_seen = split_new_and_known(fetched, known_ids)
         storage.mark_listings_seen(source.source, known_ids_seen, started_at)
         inserted = storage.insert_new_listings(new_listings)
         new_ids = [listing.source_listing_id for listing in new_listings]

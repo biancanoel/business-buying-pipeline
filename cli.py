@@ -26,6 +26,11 @@ from business_finder.geography import Gazetteer
 from business_finder.notifiers.slack import SlackWebhookNotifier
 from business_finder.pipeline import load_saved_search_files, match_listings, notify_matches, run_pipeline
 from business_finder.sources.bizben import BizBenAdapter
+from business_finder.sources.broker_sites import (
+    LIBERTY_GROUP_OF_NEVADA,
+    SANTA_ROSA_BUSINESS_AND_COMMERCIAL,
+    BrokerSiteAdapter,
+)
 from business_finder.sources.polite_http import PoliteHttpClient
 from business_finder.storage import Storage
 
@@ -39,7 +44,11 @@ def run_command(arguments: argparse.Namespace) -> None:
     storage = Storage.connect()
     try:
         summary = run_pipeline(
-            sources=[BizBenAdapter(http_client, target_states=ingest_states_from_environment())],
+            sources=[
+                BizBenAdapter(http_client, target_states=ingest_states_from_environment()),
+                BrokerSiteAdapter(http_client, SANTA_ROSA_BUSINESS_AND_COMMERCIAL),
+                BrokerSiteAdapter(http_client, LIBERTY_GROUP_OF_NEVADA),
+            ],
             extractor=make_extractor(ExtractionSettings.from_environment()),
             storage=storage,
             saved_searches=load_saved_search_files(SAVED_SEARCHES_DIR),

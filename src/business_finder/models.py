@@ -37,6 +37,8 @@ class ListingSource(StrEnum):
     SMB_DEAL_HUNTER = "smb_deal_hunter"
     MURPHY_BUSINESS = "murphy_business"
     BUSINESSMART = "businessmart"
+    SANTA_ROSA_BUSINESS_AND_COMMERCIAL = "santa_rosa_business_and_commercial"
+    LIBERTY_GROUP_OF_NEVADA = "liberty_group_of_nevada"
 
 
 class LocationPrecision(StrEnum):

@@ -12,7 +12,8 @@ create table if not exists listings (
     source                        text not null check (source in (
                                       'transworld', 'bizben', 'sunbelt', 'businessesforsale',
                                       'bizbuysell', 'bizscout', 'smb_deal_hunter',
-                                      'murphy_business', 'businessmart')),
+                                      'murphy_business', 'businessmart',
+                                      'santa_rosa_business_and_commercial', 'liberty_group_of_nevada')),
     source_listing_id             text not null,
     url                           text not null,
     title                         text,
@@ -126,6 +127,14 @@ alter table listings add column if not exists extracted_at timestamptz;
 alter table matches add column if not exists is_confirmed boolean not null default true;
 alter table matches add column if not exists missing_facts text[] not null default '{}';
 alter table business_type_judgments add column if not exists matched_type text;
+
+-- Allowed sources: replaced as a whole so new sources can be added.
+alter table listings drop constraint if exists listings_source_check;
+alter table listings add constraint listings_source_check check (source in (
+    'transworld', 'bizben', 'sunbelt', 'businessesforsale',
+    'bizbuysell', 'bizscout', 'smb_deal_hunter',
+    'murphy_business', 'businessmart',
+    'santa_rosa_business_and_commercial', 'liberty_group_of_nevada'));
 
 -- Supabase publishes every table through its web API to anyone with the
 -- project's public key. The pipeline connects to the database directly, as

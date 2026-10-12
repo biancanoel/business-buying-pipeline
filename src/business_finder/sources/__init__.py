@@ -15,10 +15,12 @@ class SourceAdapter(Protocol):
 
     source: ListingSource
 
-    def fetch_listings(self) -> Iterator[Listing]:
+    def fetch_listings(self, known_ids: set[str] = frozenset()) -> Iterator[Listing]:
         """Yield every current listing this source has for the target states.
 
         Adapters collect broadly (all listings in the target states) rather
         than per saved search; matching happens later against stored listings.
+        `known_ids` are the site IDs already stored; an adapter may skip
+        extra requests for them, since they are only marked as seen.
         """
         ...
