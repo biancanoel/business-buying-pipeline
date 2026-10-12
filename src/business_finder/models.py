@@ -252,5 +252,33 @@ class Match(BaseModel):
     saved_search_id: UUID
     listing_id: UUID
     match_summary: str = Field(description="One line explaining why the listing matched.")
+    is_confirmed: bool = Field(
+        default=True,
+        description="False for a possible match: nothing rules it out, but some facts are not stated.",
+    )
+    missing_facts: list[str] = Field(
+        default_factory=list,
+        description="The criteria a possible match could not be checked against, e.g. seller_discretionary_earnings.",
+    )
     matched_at: datetime = Field(default_factory=utc_now)
     notified_at: datetime | None = None
+
+
+class BusinessTypeJudgment(BaseModel):
+    """A model's yes/no call on whether a listing's business fits a saved search's types.
+
+    Stored so each listing is judged once per search. `criteria_fingerprint`
+    records which business types and rules the call was made under, so a
+    change to them triggers a new judgment.
+    """
+
+    saved_search_id: UUID
+    listing_id: UUID
+    fits: bool
+    matched_type: str | None = Field(
+        default=None,
+        description="Which of the search's business types the listing fits; None when it does not fit.",
+    )
+    reason: str = Field(description="One line explaining the call; becomes the match summary.")
+    criteria_fingerprint: str
+    judged_at: datetime = Field(default_factory=utc_now)

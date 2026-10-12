@@ -21,8 +21,9 @@ from business_finder.evaluation import (
     save_evaluation_set,
 )
 from business_finder.extraction import make_extractor
+from business_finder.extraction.business_type_judge import ClaudeBusinessTypeJudge
 from business_finder.geography import Gazetteer
-from business_finder.pipeline import load_saved_search_files, run_pipeline
+from business_finder.pipeline import load_saved_search_files, match_listings, run_pipeline
 from business_finder.sources.bizben import BizBenAdapter
 from business_finder.sources.polite_http import PoliteHttpClient
 from business_finder.storage import Storage
@@ -45,6 +46,14 @@ def run_command(arguments: argparse.Namespace) -> None:
             gazetteer=Gazetteer.load(),
             approximate_margin_miles=approximate_margin_from_environment(),
         )
+        match_summaries = match_listings(
+            storage=storage,
+            judge=ClaudeBusinessTypeJudge(ExtractionSettings.from_environment()),
+            saved_searches=load_saved_search_files(SAVED_SEARCHES_DIR),
+            gazetteer=Gazetteer.load(),
+            approximate_margin_miles=approximate_margin_from_environment(),
+            report=print,
+        )
     finally:
         storage.close()
         http_client.close()
@@ -59,6 +68,40 @@ def run_command(arguments: argparse.Namespace) -> None:
         print(f"{len(summary.failed_readings)} readings failed and will be retried next run:")
         for failure in summary.failed_readings:
             print(f"  {failure}")
+    print_match_summaries(match_summaries)
+
+
+def match_command(arguments: argparse.Namespace) -> None:
+    """Match stored listings against the saved searches, without fetching anything new."""
+    storage = Storage.connect()
+    try:
+        saved_searches = load_saved_search_files(SAVED_SEARCHES_DIR)
+        for saved_search in saved_searches:
+            storage.save_saved_search(saved_search)
+        summaries = match_listings(
+            storage=storage,
+            judge=ClaudeBusinessTypeJudge(ExtractionSettings.from_environment()),
+            saved_searches=saved_searches,
+            gazetteer=Gazetteer.load(),
+            approximate_margin_miles=approximate_margin_from_environment(),
+            report=print,
+        )
+    finally:
+        storage.close()
+    print_match_summaries(summaries)
+
+
+def print_match_summaries(summaries) -> None:
+    for summary in summaries:
+        print()
+        print(
+            f"{summary.search_name}: {summary.confirmed_matches} confirmed and {summary.possible_matches} possible matches "
+            f"({summary.judged} business types judged this time)."
+        )
+        if summary.failed_judgments:
+            print(f"{len(summary.failed_judgments)} judgments failed and will be retried next time:")
+            for failure in summary.failed_judgments:
+                print(f"  {failure}")
 
 
 def build_eval_set_command(arguments: argparse.Namespace) -> None:
@@ -84,8 +127,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Business-for-Sale Finder")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    run = commands.add_parser("run", help="Fetch listings, store new ones and have Claude read them")
+    run = commands.add_parser("run", help="Fetch listings, store new ones, have Claude read them, and match")
     run.set_defaults(handler=run_command)
+
+    match = commands.add_parser("match", help="Match stored listings against the saved searches (no fetching)")
+    match.set_defaults(handler=match_command)
 
     build = commands.add_parser("build-eval-set", help="Make the evaluation set from reviewed listings")
     build.add_argument("--candidates", type=Path, default=DEFAULT_EVALUATION_DIR / "candidates.json")

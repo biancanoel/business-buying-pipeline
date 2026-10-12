@@ -82,6 +82,9 @@ create table if not exists matches (
     saved_search_id  uuid not null references saved_searches (id) on delete cascade,
     listing_id       uuid not null references listings (id) on delete cascade,
     match_summary    text not null,
+    -- False for a possible match: nothing rules it out, but some facts are not stated.
+    is_confirmed     boolean not null default true,
+    missing_facts    text[] not null default '{}',
     matched_at       timestamptz not null default now(),
     -- Null until the match has been sent, so failed notifications are retried.
     notified_at      timestamptz,
@@ -95,9 +98,34 @@ create index if not exists matches_not_yet_notified
     on matches (saved_search_id)
     where notified_at is null;
 
+-- Postgres does not index foreign keys on its own; this one is used when a
+-- listing is deleted (cascade) and when looking up a listing's matches.
+create index if not exists matches_listing_id on matches (listing_id);
+
+-- A model's yes/no call on whether a listing's business fits a saved
+-- search's business types. One per listing and search: judging again
+-- replaces it. criteria_fingerprint records which types and rules the call
+-- was made under, so changing them triggers a new judgment.
+create table if not exists business_type_judgments (
+    saved_search_id      uuid not null references saved_searches (id) on delete cascade,
+    listing_id           uuid not null references listings (id) on delete cascade,
+    fits                 boolean not null,
+    -- Which of the search's business types it fits; null when it does not fit.
+    matched_type         text,
+    reason               text not null,
+    criteria_fingerprint text not null,
+    judged_at            timestamptz not null default now(),
+    primary key (saved_search_id, listing_id)
+);
+
+create index if not exists business_type_judgments_listing_id on business_type_judgments (listing_id);
+
 -- Columns added after the first version. "if not exists" makes this file
 -- safe to run again on a database created from an older version.
 alter table listings add column if not exists extracted_at timestamptz;
+alter table matches add column if not exists is_confirmed boolean not null default true;
+alter table matches add column if not exists missing_facts text[] not null default '{}';
+alter table business_type_judgments add column if not exists matched_type text;
 
 -- Supabase publishes every table through its web API to anyone with the
 -- project's public key. The pipeline connects to the database directly, as
@@ -106,3 +134,4 @@ alter table listings add column if not exists extracted_at timestamptz;
 alter table listings enable row level security;
 alter table saved_searches enable row level security;
 alter table matches enable row level security;
+alter table business_type_judgments enable row level security;

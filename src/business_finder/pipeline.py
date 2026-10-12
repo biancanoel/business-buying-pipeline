@@ -11,7 +11,11 @@ Steps, in order:
    listings skipped for price when a search's limit widens, listings whose
    reading failed, and listings a stopped run never reached.
 
-Matching and notifications come later.
+5. Match every stored listing against each saved search: number and
+   location checks first, then a model's call on business type for the
+   listings those checks keep (judged once per listing and search).
+
+Notifications come later.
 
 The decisions are small pure functions (tested); `run_pipeline` only calls
 the sources, Claude and the database in order, and is checked by real runs.
@@ -30,8 +34,15 @@ from business_finder.extraction.extractor import (
     merge_fields,
     needs_model_extraction,
 )
-from business_finder.geography import Gazetteer, listings_not_out_of_reach, search_areas_for
-from business_finder.models import Listing, ListingFields, ListingSource, SavedSearch
+from business_finder.extraction.business_type_judge import BusinessTypeJudge
+from business_finder.geography import Gazetteer, listings_not_out_of_reach, locate, search_areas_for, within_search_area
+from business_finder.matching import (
+    business_criteria_fingerprint,
+    check_criteria,
+    decide_match,
+    listings_needing_judgment,
+)
+from business_finder.models import BusinessTypeJudgment, Listing, ListingFields, ListingSource, SavedSearch
 from business_finder.sources import SourceAdapter
 from business_finder.storage import Storage
 
@@ -183,3 +194,84 @@ def run_pipeline(
             report(f"  {number} of {len(to_read)} read")
 
     return summary
+
+
+# --- Step 5: matching ------------------------------------------------------------------
+
+
+@dataclass
+class MatchSummary:
+    """What one matching pass did for one saved search."""
+
+    search_name: str
+    not_ruled_out: int = 0
+    judged: int = 0
+    confirmed_matches: int = 0
+    possible_matches: int = 0
+    failed_judgments: list[str] = field(default_factory=list)
+
+
+def match_listings(
+    storage: Storage,
+    judge: BusinessTypeJudge,
+    saved_searches: list[SavedSearch],
+    gazetteer: Gazetteer,
+    approximate_margin_miles: float,
+    report: Callable[[str], None] = lambda message: None,
+) -> list[MatchSummary]:
+    """Match every stored listing against each saved search and store the matches."""
+    current_year = datetime.now(UTC).year
+    listings = storage.load_listings()
+    summaries = []
+
+    for saved_search in saved_searches:
+        summary = MatchSummary(search_name=saved_search.name)
+        area = search_areas_for([saved_search], gazetteer)[0]
+
+        checks = {}
+        for listing in listings:
+            within_reach = within_search_area(locate(listing.fields, gazetteer), area, approximate_margin_miles)
+            check = check_criteria(listing.fields, saved_search, within_reach, current_year)
+            if not check.ruled_out:
+                checks[listing.id] = (listing, check)
+        summary.not_ruled_out = len(checks)
+
+        judgments = storage.load_judgments(saved_search.id)
+        candidates = [listing for listing, _ in checks.values()]
+        needing = listings_needing_judgment(candidates, judgments, saved_search, judge.version)
+        report(f"{saved_search.name}: {len(checks)} listings pass the number checks; judging business type for {len(needing)}…")
+        fingerprint = business_criteria_fingerprint(saved_search, judge.version)
+        for listing in needing:
+            try:
+                answer = judge.judge(listing, saved_search)
+            except ExtractionError as error:
+                summary.failed_judgments.append(f"{listing.url}: {error}")
+                continue
+            judgment = BusinessTypeJudgment(
+                saved_search_id=saved_search.id,
+                listing_id=listing.id,
+                fits=answer.fits,
+                matched_type=answer.matched_type,
+                reason=answer.reason,
+                criteria_fingerprint=fingerprint,
+            )
+            storage.save_judgment(judgment)
+            judgments[listing.id] = judgment
+            summary.judged += 1
+
+        still_matching_listing_ids = set()
+        for listing, check in checks.values():
+            match = decide_match(listing, check, judgments.get(listing.id), saved_search)
+            if match is None:
+                continue
+            storage.save_match(match)
+            still_matching_listing_ids.add(listing.id)
+            if match.is_confirmed:
+                summary.confirmed_matches += 1
+            else:
+                summary.possible_matches += 1
+
+        storage.remove_unsent_matches_except(saved_search.id, still_matching_listing_ids)
+        report(f"  {summary.confirmed_matches} confirmed matches, {summary.possible_matches} possible matches")
+        summaries.append(summary)
+    return summaries

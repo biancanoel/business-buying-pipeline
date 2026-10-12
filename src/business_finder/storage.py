@@ -14,6 +14,7 @@ The table definitions are in db/schema.sql.
 import os
 from collections.abc import Iterable
 from datetime import datetime
+from uuid import UUID
 
 import psycopg
 from psycopg import sql
@@ -21,11 +22,13 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from business_finder.models import (
+    BusinessTypeJudgment,
     Listing,
     ListingFields,
     ListingSource,
     ListingStatus,
     LocationPrecision,
+    Match,
     SavedSearch,
 )
 
@@ -207,27 +210,90 @@ class Storage:
         rows = self.connection.execute("select * from listings").fetchall()
         return [listing_from_row(row) for row in rows]
 
+    def upsert(self, table: str, row: dict, key_columns: list[str], columns_to_update: list[str]) -> None:
+        """Insert a row, or update the listed columns of the row with the same key.
+
+        One atomic statement, so there is no gap between checking and writing.
+        Columns not listed (such as when a match was first found or sent)
+        keep their stored values.
+        """
+        statement = sql.SQL(
+            "insert into {table} ({columns}) values ({values}) on conflict ({keys}) do update set {updates}"
+        ).format(
+            table=sql.Identifier(table),
+            columns=sql.SQL(", ").join(sql.Identifier(column) for column in row),
+            values=sql.SQL(", ").join(sql.Placeholder(column) for column in row),
+            keys=sql.SQL(", ").join(sql.Identifier(column) for column in key_columns),
+            updates=sql.SQL(", ").join(
+                sql.SQL("{column} = excluded.{column}").format(column=sql.Identifier(column))
+                for column in columns_to_update
+            ),
+        )
+        with self.connection.transaction():
+            self.connection.execute(statement, values_for_sql(row))
+
     # Saved searches
 
     def save_saved_search(self, saved_search: SavedSearch) -> None:
         """Insert a saved search, or replace the stored one with the same id."""
         row = saved_search_to_row(saved_search)
-        updatable_columns = [column for column in row if column not in {"id", "created_at"}]
-        statement = sql.SQL(
-            "insert into saved_searches ({columns}) values ({values}) "
-            "on conflict (id) do update set {updates}"
-        ).format(
-            columns=sql.SQL(", ").join(sql.Identifier(column) for column in row),
-            values=sql.SQL(", ").join(sql.Placeholder(column) for column in row),
-            updates=sql.SQL(", ").join(
-                sql.SQL("{column} = excluded.{column}").format(column=sql.Identifier(column))
-                for column in updatable_columns
-            ),
-        )
-        with self.connection.transaction():
-            self.connection.execute(statement, row)
+        columns_to_update = [column for column in row if column not in {"id", "created_at"}]
+        self.upsert("saved_searches", row, key_columns=["id"], columns_to_update=columns_to_update)
 
     def load_saved_searches(self) -> list[SavedSearch]:
         """Return every stored saved search."""
         rows = self.connection.execute("select * from saved_searches order by created_at").fetchall()
         return [saved_search_from_row(row) for row in rows]
+
+    # Business-type judgments
+
+    def save_judgment(self, judgment: BusinessTypeJudgment) -> None:
+        """Store a business-type judgment, replacing any earlier one for the same listing and search."""
+        self.upsert(
+            "business_type_judgments",
+            judgment.model_dump(),
+            key_columns=["saved_search_id", "listing_id"],
+            columns_to_update=["fits", "matched_type", "reason", "criteria_fingerprint", "judged_at"],
+        )
+
+    def load_judgments(self, saved_search_id: UUID) -> dict[UUID, BusinessTypeJudgment]:
+        """Return a search's judgments, keyed by listing id."""
+        rows = self.connection.execute(
+            "select * from business_type_judgments where saved_search_id = %s", (saved_search_id,)
+        ).fetchall()
+        return {row["listing_id"]: BusinessTypeJudgment(**row) for row in rows}
+
+    # Matches
+
+    def save_match(self, match: Match) -> None:
+        """Store a match, or update the stored one for the same listing and search.
+
+        When it was first matched and when it was sent are kept, so a match
+        is only announced once even if it changes from possible to confirmed.
+        """
+        self.upsert(
+            "matches",
+            match.model_dump(),
+            key_columns=["saved_search_id", "listing_id"],
+            columns_to_update=["match_summary", "is_confirmed", "missing_facts"],
+        )
+
+    def load_matches(self, saved_search_id: UUID) -> list[Match]:
+        """Return a search's matches, oldest first."""
+        rows = self.connection.execute(
+            "select * from matches where saved_search_id = %s order by matched_at", (saved_search_id,)
+        ).fetchall()
+        return [Match(**row) for row in rows]
+
+    def remove_unsent_matches_except(self, saved_search_id: UUID, still_matching_listing_ids: set[UUID]) -> None:
+        """Remove a search's matches that no longer qualify, unless they were already sent.
+
+        A listing can stop matching when it is judged again or a search's
+        criteria change. Matches already sent are kept as a record of what
+        the buyer was shown.
+        """
+        with self.connection.transaction():
+            self.connection.execute(
+                "delete from matches where saved_search_id = %s and notified_at is null and not (listing_id = any(%s))",
+                (saved_search_id, list(still_matching_listing_ids)),
+            )

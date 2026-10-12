@@ -14,11 +14,12 @@ never passed as an argument, so a failing test cannot print the password.
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import psycopg
 import pytest
 
-from business_finder.models import Listing, ListingFields, ListingSource
+from business_finder.models import BusinessTypeJudgment, Listing, ListingFields, ListingSource, Match, SavedSearch
 from business_finder.storage import Storage
 
 pytestmark = pytest.mark.skipif(
@@ -88,5 +89,94 @@ def test_count_from_a_fresh_connection_finds_saved_listings(test_schema):
         found = storage.count_saved_from_fresh_connection(ListingSource.BIZBEN, ["1000001", "not-stored"])
 
         assert found == 1
+    finally:
+        storage.close()
+
+
+
+def store_listing_and_search(storage: Storage) -> tuple[Listing, SavedSearch]:
+    """Store one listing and one saved search for the match and judgment tests."""
+    listing = make_listing()
+    saved_search = SavedSearch(name="Test search", business_types=["residential cleaning"], target_city="Petaluma", target_state="CA")
+    storage.insert_new_listings([listing])
+    storage.save_saved_search(saved_search)
+    return listing, saved_search
+
+
+def test_judging_a_listing_again_replaces_the_earlier_judgment(test_schema):
+    storage = Storage.connect(schema=test_schema)
+    try:
+        listing, saved_search = store_listing_and_search(storage)
+        first = BusinessTypeJudgment(
+            saved_search_id=saved_search.id, listing_id=listing.id, fits=False, reason="Unclear.", criteria_fingerprint="old"
+        )
+        second = first.model_copy(update={"fits": True, "reason": "Maid service.", "criteria_fingerprint": "new"})
+
+        storage.save_judgment(first)
+        storage.save_judgment(second)
+
+        assert storage.load_judgments(saved_search.id) == {listing.id: second}
+        assert count_from_a_new_connection("select count(*) from business_type_judgments") == 1
+    finally:
+        storage.close()
+
+
+def test_saving_a_match_again_updates_it_and_keeps_the_sent_time(test_schema):
+    storage = Storage.connect(schema=test_schema)
+    try:
+        listing, saved_search = store_listing_and_search(storage)
+        possible = Match(
+            saved_search_id=saved_search.id, listing_id=listing.id, match_summary="Maid service.",
+            is_confirmed=False, missing_facts=["seller_discretionary_earnings"],
+            notified_at=datetime(2026, 10, 9, 12, 0, tzinfo=UTC),
+        )
+        confirmed = possible.model_copy(update={"is_confirmed": True, "missing_facts": [], "notified_at": None})
+
+        storage.save_match(possible)
+        storage.save_match(confirmed)
+
+        stored = storage.load_matches(saved_search.id)
+        assert len(stored) == 1
+        assert stored[0].is_confirmed
+        assert stored[0].missing_facts == []
+        assert stored[0].notified_at == possible.notified_at
+    finally:
+        storage.close()
+
+
+
+def test_the_matched_business_type_is_stored_with_the_judgment(test_schema):
+    storage = Storage.connect(schema=test_schema)
+    try:
+        listing, saved_search = store_listing_and_search(storage)
+        judgment = BusinessTypeJudgment(
+            saved_search_id=saved_search.id, listing_id=listing.id, fits=True, reason="Maid service.",
+            matched_type="residential cleaning", criteria_fingerprint="current",
+        )
+
+        storage.save_judgment(judgment)
+
+        assert storage.load_judgments(saved_search.id)[listing.id].matched_type == "residential cleaning"
+    finally:
+        storage.close()
+
+
+def test_unsent_matches_that_no_longer_qualify_are_removed_and_sent_ones_kept(test_schema):
+    storage = Storage.connect(schema=test_schema)
+    try:
+        listing, saved_search = store_listing_and_search(storage)
+        sent_listing = make_listing().model_copy(update={"id": uuid4(), "source_listing_id": "1000002"})
+        storage.insert_new_listings([sent_listing])
+        unsent = Match(saved_search_id=saved_search.id, listing_id=listing.id, match_summary="Massage center.")
+        sent = Match(
+            saved_search_id=saved_search.id, listing_id=sent_listing.id, match_summary="Maid service.",
+            notified_at=datetime(2026, 10, 9, 12, 0, tzinfo=UTC),
+        )
+        storage.save_match(unsent)
+        storage.save_match(sent)
+
+        storage.remove_unsent_matches_except(saved_search.id, still_matching_listing_ids=set())
+
+        assert [match.listing_id for match in storage.load_matches(saved_search.id)] == [sent_listing.id]
     finally:
         storage.close()

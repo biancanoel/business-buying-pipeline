@@ -11,6 +11,7 @@ from business_finder.geography import (
     listings_not_out_of_reach,
     locate,
     search_areas_for,
+    within_search_area,
 )
 from business_finder.models import Listing, ListingFields, ListingSource, LocationPrecision, SavedSearch
 
@@ -177,3 +178,20 @@ def test_a_search_without_a_distance_limit_keeps_every_listing(reach_gazetteer):
     kept = listings_not_out_of_reach([las_vegas], reach_gazetteer, areas, approximate_margin_miles=50)
 
     assert kept == [las_vegas]
+
+
+
+@pytest.mark.parametrize(
+    ("fields", "max_miles", "expected"),
+    [
+        (ListingFields(city="Reno", state="NV"), 250, True),
+        (ListingFields(city="Las Vegas", state="NV"), 250, False),
+        (ListingFields(state="NV"), 250, None),
+        (ListingFields(city="Las Vegas", state="NV"), None, True),
+    ],
+    ids=["inside", "outside", "location unknown", "search has no distance limit"],
+)
+def test_within_search_area(reach_gazetteer, fields, max_miles, expected):
+    area = SearchArea(center=PETALUMA, max_miles=max_miles)
+
+    assert within_search_area(locate(fields, reach_gazetteer), area, approximate_margin_miles=50) is expected

@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "reason": {"type": "string"},
+    "matched_type": {"anyOf": [{"type": "string", "enum": ["{business_types}"]}, {"type": "null"}]},
+    "fits": {"type": "boolean"}
+  },
+  "required": ["reason", "matched_type", "fits"],
+  "additionalProperties": false
+}

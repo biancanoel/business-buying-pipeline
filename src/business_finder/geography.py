@@ -227,6 +227,18 @@ def search_areas_for(saved_searches: list[SavedSearch], gazetteer: Gazetteer) ->
     return areas
 
 
+def within_search_area(location: Location, area: SearchArea, approximate_margin_miles: float) -> bool | None:
+    """Decide whether a location is inside one search's area.
+
+    True for any location when the search has no distance limit; None when
+    the location is unknown.
+    """
+    if area.max_miles is None:
+        return True
+    miles_away = distance_miles(area.center, location.point) if location.point else None
+    return is_within_reach(location.precision, miles_away, area.max_miles, approximate_margin_miles)
+
+
 def is_out_of_every_search_area(location: Location, areas: list[SearchArea], approximate_margin_miles: float) -> bool:
     """Return True only when the location is clearly outside every search's area.
 
@@ -236,10 +248,7 @@ def is_out_of_every_search_area(location: Location, areas: list[SearchArea], app
     if not areas:
         return False
     for area in areas:
-        if area.max_miles is None:
-            return False
-        miles_away = distance_miles(area.center, location.point) if location.point else None
-        if is_within_reach(location.precision, miles_away, area.max_miles, approximate_margin_miles) is not False:
+        if within_search_area(location, area, approximate_margin_miles) is not False:
             return False
     return True
 
