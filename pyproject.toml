@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Finds small businesses for sale that match saved search criteria and posts new matches to Slack."
 readme = "README.md"
 authors = [
-    { name = "Bianca Poling", email = "bnoeltorres@gmail.com" }
+    { name = "Bianca Poling" }
 ]
 requires-python = ">=3.11"
 dependencies = [
