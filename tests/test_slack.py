@@ -160,3 +160,13 @@ def test_confirmed_matches_are_listed_before_possible_ones():
     text = message_text(weekly_message(SEARCH, matches, target_city="Petaluma"))
 
     assert text.index("Confirmed match") < text.index("Possible match")
+
+
+
+def test_other_sites_listing_the_same_business_are_linked():
+    details = make_details()
+    details.also_listed_at = [("BizBen", "https://www.bizben.com/business-for-sale/fake-123")]
+
+    text = message_text(weekly_message(SEARCH, [details], target_city="Petaluma"))
+
+    assert "Also listed on: <https://www.bizben.com/business-for-sale/fake-123|BizBen>" in text

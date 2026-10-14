@@ -36,6 +36,7 @@ from business_finder.extraction.extractor import (
     merge_fields,
     needs_model_extraction,
 )
+from business_finder.duplicates import plan_announcements
 from business_finder.extraction.business_type_judge import BusinessTypeJudge
 from business_finder.geography import (
     Gazetteer,
@@ -52,7 +53,7 @@ from business_finder.matching import (
     listings_needing_judgment,
 )
 from business_finder.models import BusinessTypeJudgment, Listing, ListingFields, ListingSource, SavedSearch
-from business_finder.notifiers.slack import MatchDetails, weekly_message
+from business_finder.notifiers.slack import SOURCE_NAMES, MatchDetails, weekly_message
 from business_finder.sources import SourceAdapter
 from business_finder.storage import Storage
 
@@ -304,30 +305,40 @@ def notify_matches(
 ) -> None:
     """Post each search's unsent matches, then mark them as sent.
 
-    Matches are only marked as sent after Slack accepts the message, so a
-    failed post is retried on the next run.
+    The same business listed on several sites is announced once, with links
+    to the other copies, and never again once announced. Matches are only
+    marked as sent after Slack accepts the message, so a failed post is
+    retried on the next run.
     """
     listings_by_id = {listing.id: listing for listing in storage.load_listings()}
     for saved_search in saved_searches:
         area = search_areas_for([saved_search], gazetteer)[0]
-        unsent = storage.load_unsent_matches(saved_search.id)
+        all_matches = storage.load_matches(saved_search.id)
+        unsent = [match for match in all_matches if match.notified_at is None]
+        already_sent_listings = [listings_by_id[match.listing_id] for match in all_matches if match.notified_at is not None]
         judgments = storage.load_judgments(saved_search.id)
+        plan = plan_announcements([(match, listings_by_id[match.listing_id]) for match in unsent], already_sent_listings)
 
         entries = []
-        for match in unsent:
-            listing = listings_by_id[match.listing_id]
-            location = locate(listing.fields, gazetteer)
-            judgment = judgments.get(listing.id)
+        for entry in plan.entries:
+            location = locate(entry.listing.fields, gazetteer)
+            judgment = judgments.get(entry.listing.id)
             entries.append(
                 MatchDetails(
-                    match=match,
-                    listing=listing,
+                    match=entry.match,
+                    listing=entry.listing,
                     matched_type=judgment.matched_type if judgment else None,
                     miles_away=distance_miles(area.center, location.point) if location.point else None,
                     precision=location.precision,
+                    also_listed_at=[
+                        (SOURCE_NAMES.get(other.source, other.source.value), other.url) for other in entry.also_listed
+                    ],
                 )
             )
 
         notifier.post(weekly_message(saved_search, entries, target_city=saved_search.target_city))
         storage.mark_matches_sent(saved_search.id, [match.listing_id for match in unsent], sent_at=datetime.now(UTC))
-        report(f"{saved_search.name}: posted {len(unsent)} new matches to Slack")
+        report(
+            f"{saved_search.name}: posted {len(entries)} new businesses to Slack "
+            f"({len(plan.held_back)} already announced from another site held back)"
+        )

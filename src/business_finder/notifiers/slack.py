@@ -11,11 +11,11 @@ comes from the environment, never from code or the repo.
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
-from business_finder.models import Listing, LocationPrecision, Match, SavedSearch
+from business_finder.models import Listing, ListingSource, LocationPrecision, Match, SavedSearch
 
 WEBHOOK_URL_ENVIRONMENT_VARIABLE = "SLACK_WEBHOOK_URL"
 
@@ -33,6 +33,14 @@ FACT_NAMES = {
 }
 
 
+# How each source is named in "Also listed on" links.
+SOURCE_NAMES = {
+    ListingSource.BIZBEN: "BizBen",
+    ListingSource.SANTA_ROSA_BUSINESS_AND_COMMERCIAL: "Santa Rosa Business & Commercial",
+    ListingSource.LIBERTY_GROUP_OF_NEVADA: "Liberty Group of Nevada",
+}
+
+
 class SlackPostError(Exception):
     """Raised when Slack does not accept a message."""
 
@@ -46,6 +54,7 @@ class MatchDetails:
     matched_type: str | None
     miles_away: float | None
     precision: LocationPrecision
+    also_listed_at: list[tuple[str, str]] = field(default_factory=list)  # (site name, listing URL)
 
 
 # --- Formatting --------------------------------------------------------------------------
@@ -143,6 +152,9 @@ def match_text(details: MatchDetails, saved_search: SavedSearch, target_city: st
     if details.match.missing_facts:
         missing = ", ".join(FACT_NAMES.get(fact, fact) for fact in details.match.missing_facts)
         lines.append(f"_Not stated: {missing}. Ask the broker._")
+    if details.also_listed_at:
+        links = ", ".join(f"<{url}|{site_name}>" for site_name, url in details.also_listed_at)
+        lines.append(f"Also listed on: {links}")
     lines.append(f"ID `{details.match.listing_id}`")
     return "\n".join(lines)
 
