@@ -5,7 +5,8 @@
 # by hand from the Actions tab ("Run workflow").
 #
 # Secrets (Settings > Secrets and variables > Actions): ANTHROPIC_API_KEY,
-# DATABASE_URL and SLACK_WEBHOOK_URL. They are never printed in logs.
+# DATABASE_URL, SLACK_WEBHOOK_URL, ALERTS_EMAIL_ADDRESS and
+# ALERTS_EMAIL_APP_PASSWORD. They are never printed in logs.
 
 name: Weekly run
 
@@ -38,6 +39,8 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          ALERTS_EMAIL_ADDRESS: ${{ secrets.ALERTS_EMAIL_ADDRESS }}
+          ALERTS_EMAIL_APP_PASSWORD: ${{ secrets.ALERTS_EMAIL_APP_PASSWORD }}
           NOTIFY: ${{ github.event_name == 'schedule' || inputs.notify }}
         run: |
           if [ "$NOTIFY" = "true" ]; then

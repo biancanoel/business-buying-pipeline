@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "listings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "link_label": {"type": "string", "enum": ["{link_labels}"]},
+          "title": {"type": "string"},
+          "details": {"type": "string"}
+        },
+        "required": ["link_label", "title", "details"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["listings"],
+  "additionalProperties": false
+}

@@ -26,6 +26,7 @@ from business_finder.geography import Gazetteer
 from business_finder.notifiers.slack import SlackWebhookNotifier
 from business_finder.pipeline import load_saved_search_files, match_listings, notify_matches, run_pipeline
 from business_finder.sources.bizben import BizBenAdapter
+from business_finder.sources.email_listings import ClaudeAlertReader
 from business_finder.sources.email_alerts import AlertInbox, AlertInboxError, new_alert_emails
 from business_finder.sources.broker_sites import (
     LIBERTY_GROUP_OF_NEVADA,
@@ -39,10 +40,20 @@ DEFAULT_EVALUATION_DIR = Path("data/evaluation")
 SAVED_SEARCHES_DIR = Path("saved_searches")
 
 
+def alert_inbox_or_none() -> AlertInbox | None:
+    """The alerts inbox if its settings are present; otherwise the run skips alert emails."""
+    try:
+        return AlertInbox.from_environment()
+    except AlertInboxError:
+        print("Alert emails skipped: ALERTS_EMAIL_ADDRESS / ALERTS_EMAIL_APP_PASSWORD are not set.")
+        return None
+
+
 def run_command(arguments: argparse.Namespace) -> None:
     """Fetch listings, store new ones and have Claude read them."""
     http_client = PoliteHttpClient()
     storage = Storage.connect()
+    alert_inbox = alert_inbox_or_none()
     try:
         summary = run_pipeline(
             sources=[
@@ -56,6 +67,8 @@ def run_command(arguments: argparse.Namespace) -> None:
             report=print,
             gazetteer=Gazetteer.load(),
             approximate_margin_miles=approximate_margin_from_environment(),
+            alert_inbox=alert_inbox,
+            alert_reader=ClaudeAlertReader(ExtractionSettings.from_environment()) if alert_inbox else None,
         )
         match_summaries = match_listings(
             storage=storage,
@@ -83,6 +96,10 @@ def run_command(arguments: argparse.Namespace) -> None:
         f"Claude read {summary.read_by_claude}; skipped {summary.skipped_over_price_limit} over the price limit "
         f"and {summary.skipped_out_of_reach} out of reach (both are caught up if a search widens)."
     )
+    if summary.failed_alert_emails:
+        print(f"{len(summary.failed_alert_emails)} alert emails could not be read and will be retried next run:")
+        for failure in summary.failed_alert_emails:
+            print(f"  {failure}")
     if summary.failed_readings:
         print(f"{len(summary.failed_readings)} readings failed and will be retried next run:")
         for failure in summary.failed_readings:

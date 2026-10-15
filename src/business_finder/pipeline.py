@@ -55,6 +55,8 @@ from business_finder.matching import (
 from business_finder.models import BusinessTypeJudgment, Listing, ListingFields, ListingSource, SavedSearch
 from business_finder.notifiers.slack import SOURCE_NAMES, MatchDetails, weekly_message
 from business_finder.sources import SourceAdapter
+from business_finder.sources.email_listings import ClaudeAlertReader
+from business_finder.sources.email_alerts import AlertInbox, AlertInboxError, new_alert_emails
 from business_finder.storage import Storage
 
 # How often to report progress while Claude reads listings.
@@ -80,6 +82,8 @@ class RunSummary:
     skipped_over_price_limit: int = 0
     skipped_out_of_reach: int = 0
     failed_readings: list[str] = field(default_factory=list)
+    alert_emails_read: int = 0
+    failed_alert_emails: list[str] = field(default_factory=list)
 
 
 # --- Decisions -----------------------------------------------------------------
@@ -152,6 +156,8 @@ def run_pipeline(
     report: Callable[[str], None] = lambda message: None,
     gazetteer: Gazetteer | None = None,
     approximate_margin_miles: float = 50,
+    alert_inbox: AlertInbox | None = None,
+    alert_reader: ClaudeAlertReader | None = None,
 ) -> RunSummary:
     """Run steps 1 to 4 once. `report` receives progress messages.
 
@@ -180,6 +186,9 @@ def run_pipeline(
         summary.seen_again += len(known_ids_seen)
         report(f"  {len(fetched)} fetched: {inserted} new, {len(known_ids_seen)} already stored")
 
+    if alert_inbox is not None and alert_reader is not None:
+        ingest_alert_emails(alert_inbox, alert_reader, storage, summary, report)
+
     price_ceiling = extraction_price_ceiling(saved_searches)
     awaiting = storage.listings_awaiting_extraction()
     within_price = listings_to_extract(awaiting, price_ceiling)
@@ -206,6 +215,51 @@ def run_pipeline(
             report(f"  {number} of {len(to_read)} read")
 
     return summary
+
+
+# --- Step 1b: listing-alert emails --------------------------------------------------------
+
+
+def ingest_alert_emails(
+    inbox: AlertInbox,
+    reader: ClaudeAlertReader,
+    storage: Storage,
+    summary: RunSummary,
+    report: Callable[[str], None],
+) -> None:
+    """Store the listings from new alert emails, then mark each email as processed.
+
+    An email is marked only after its listings are confirmed saved, so an
+    email whose reading fails is tried again next run. If the inbox cannot
+    be read at all, the run carries on with the other sources.
+    """
+    try:
+        emails = new_alert_emails(inbox.recent_emails(), storage.processed_email_ids())
+    except AlertInboxError as error:
+        report(f"Skipping alert emails: {error}")
+        return
+    report(f"Reading {len(emails)} new alert emails…")
+
+    for alert in emails:
+        try:
+            listings = reader.read(alert)
+        except ExtractionError as error:
+            summary.failed_alert_emails.append(f"{alert.subject}: {error}")
+            continue
+        known_ids = storage.known_source_listing_ids(alert.source)
+        new_listings, known_ids_seen = split_new_and_known(listings, known_ids)
+        storage.mark_listings_seen(alert.source, known_ids_seen, datetime.now(UTC))
+        inserted = storage.insert_new_listings(new_listings)
+        new_ids = [listing.source_listing_id for listing in new_listings]
+        found = storage.count_saved_from_fresh_connection(alert.source, new_ids)
+        stop_if_not_saved(alert.source, expected=len(new_ids), found=found)
+        storage.mark_email_processed(alert.message_id, alert.source, alert.received_at, alert.text, len(listings))
+
+        summary.alert_emails_read += 1
+        summary.fetched += len(listings)
+        summary.new += inserted
+        summary.seen_again += len(known_ids_seen)
+        report(f"  {alert.source.value}: {len(listings)} listings ({inserted} new) from \"{alert.subject[:60]}\"")
 
 
 # --- Step 5: matching ------------------------------------------------------------------
