@@ -14,6 +14,7 @@ Find small businesses for sale that match a buyer's criteria across several list
   - Comments explain _why_, not just _what_.
 - Python 3.11+.
 - Secrets and environment-specific values (API keys, webhook URLs, inbox credentials, database URL) come from environment variables, never hardcoded.
+- **Never print a secret, not even partly.** Before running anything with `--env-file .env`, check the file's format with a script that reports only setting names and whether each line is valid (values with spaces must be quoted or have the spaces removed; uv echoes unparseable lines in its warnings). When running with secrets loaded, discard the tool's own stderr and print only messages that cannot contain a secret; never print raw exception text from a login or connection.
 - Keep the core logic free of any interface code (CLI, web, Slack). Interfaces are thin wrappers that call the core.
 
 ## Testing (important)

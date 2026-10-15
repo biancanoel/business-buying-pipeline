@@ -26,6 +26,7 @@ from business_finder.geography import Gazetteer
 from business_finder.notifiers.slack import SlackWebhookNotifier
 from business_finder.pipeline import load_saved_search_files, match_listings, notify_matches, run_pipeline
 from business_finder.sources.bizben import BizBenAdapter
+from business_finder.sources.email_alerts import AlertInbox, AlertInboxError, new_alert_emails
 from business_finder.sources.broker_sites import (
     LIBERTY_GROUP_OF_NEVADA,
     SANTA_ROSA_BUSINESS_AND_COMMERCIAL,
@@ -124,6 +125,24 @@ def notify_command(arguments: argparse.Namespace) -> None:
         storage.close()
 
 
+def inbox_command(arguments: argparse.Namespace) -> None:
+    """List the alert emails the next run would process. Reads only; changes nothing."""
+    storage = Storage.connect()
+    try:
+        processed = storage.processed_email_ids()
+    finally:
+        storage.close()
+    try:
+        emails = AlertInbox.from_environment().recent_emails()
+    except AlertInboxError as error:
+        print(f"Could not read the alerts inbox: {error}")
+        return
+    new = new_alert_emails(emails, processed)
+    print(f"{len(emails)} emails in the last 30 days; {len(new)} new alert emails from listing sites:")
+    for alert in new:
+        print(f"  {alert.received_at:%Y-%m-%d} {alert.source.value:22} {alert.subject[:70]}")
+
+
 def print_match_summaries(summaries) -> None:
     for summary in summaries:
         print()
@@ -163,6 +182,9 @@ def main() -> None:
     run = commands.add_parser("run", help="Fetch listings, read new ones, match, and post new matches to Slack")
     run.add_argument("--no-notify", dest="notify", action="store_false", help="Skip posting to Slack")
     run.set_defaults(handler=run_command)
+
+    inbox = commands.add_parser("inbox", help="List new listing-alert emails (reads only)")
+    inbox.set_defaults(handler=inbox_command)
 
     notify = commands.add_parser("notify", help="Post unsent matches to Slack")
     notify.set_defaults(handler=notify_command)

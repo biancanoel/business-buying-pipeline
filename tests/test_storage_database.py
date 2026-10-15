@@ -196,3 +196,19 @@ def test_matches_marked_as_sent_are_no_longer_listed_as_unsent(test_schema):
         assert storage.load_matches(saved_search.id)[0].notified_at == datetime(2026, 10, 12, 9, 0, tzinfo=UTC)
     finally:
         storage.close()
+
+
+def test_processed_emails_are_remembered(test_schema):
+    storage = Storage.connect(schema=test_schema)
+    try:
+        storage.mark_email_processed(
+            message_id="<alert-1@bizbuysell.com>",
+            source=ListingSource.BIZBUYSELL,
+            received_at=datetime(2026, 10, 14, 15, 30, tzinfo=UTC),
+            body_text="New listings match your search.",
+            listing_count=3,
+        )
+
+        assert storage.processed_email_ids() == {"<alert-1@bizbuysell.com>"}
+    finally:
+        storage.close()

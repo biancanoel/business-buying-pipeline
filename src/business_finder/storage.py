@@ -313,3 +313,32 @@ class Storage:
                 "update matches set notified_at = %s where saved_search_id = %s and listing_id = any(%s)",
                 (sent_at, saved_search_id, listing_ids),
             )
+
+    # Alert emails
+
+    def processed_email_ids(self) -> set[str]:
+        """Return the Message-IDs of alert emails already processed."""
+        rows = self.connection.execute("select message_id from processed_emails").fetchall()
+        return {row["message_id"] for row in rows}
+
+    def mark_email_processed(
+        self,
+        message_id: str,
+        source: ListingSource,
+        received_at: datetime,
+        body_text: str,
+        listing_count: int,
+    ) -> None:
+        """Remember that an alert email was processed, with its text for re-reading later."""
+        self.upsert(
+            "processed_emails",
+            {
+                "message_id": message_id,
+                "source": source.value,
+                "received_at": received_at,
+                "body_text": body_text,
+                "listing_count": listing_count,
+            },
+            key_columns=["message_id"],
+            columns_to_update=["body_text", "listing_count"],
+        )

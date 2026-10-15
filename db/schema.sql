@@ -121,6 +121,17 @@ create table if not exists business_type_judgments (
 
 create index if not exists business_type_judgments_listing_id on business_type_judgments (listing_id);
 
+-- Alert emails already turned into listings, so each is processed once.
+-- The text is kept so emails can be read again if the reader improves.
+create table if not exists processed_emails (
+    message_id     text primary key,
+    source         text not null,
+    received_at    timestamptz not null,
+    body_text      text not null,
+    listing_count  integer not null default 0,
+    processed_at   timestamptz not null default now()
+);
+
 -- Columns added after the first version. "if not exists" makes this file
 -- safe to run again on a database created from an older version.
 alter table listings add column if not exists extracted_at timestamptz;
@@ -144,3 +155,4 @@ alter table listings enable row level security;
 alter table saved_searches enable row level security;
 alter table matches enable row level security;
 alter table business_type_judgments enable row level security;
+alter table processed_emails enable row level security;
