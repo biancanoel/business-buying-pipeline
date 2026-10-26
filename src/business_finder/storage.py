@@ -176,6 +176,14 @@ class Storage:
             ).fetchone()
         return row[0]
 
+    def count_listings(self) -> int:
+        """Count every stored listing.
+
+        Cheap enough to run any time; the mid-week check uses it so the free
+        Supabase project never goes 7 days without activity and gets paused.
+        """
+        return self.connection.execute("select count(*) as listing_count from listings").fetchone()["listing_count"]
+
     def mark_listings_seen(self, source: ListingSource, source_listing_ids: Iterable[str], seen_at: datetime) -> None:
         """Record that these stored listings were still on the site at `seen_at`."""
         with self.connection.transaction():

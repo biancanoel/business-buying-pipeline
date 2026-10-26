@@ -160,6 +160,16 @@ def inbox_command(arguments: argparse.Namespace) -> None:
         print(f"  {alert.received_at:%Y-%m-%d} {alert.source.value:22} {alert.subject[:70]}")
 
 
+def check_database_command(arguments: argparse.Namespace) -> None:
+    """Make one small read from the database. Run mid-week so Supabase doesn't pause the project."""
+    storage = Storage.connect()
+    try:
+        listing_count = storage.count_listings()
+    finally:
+        storage.close()
+    print(f"Database is reachable: {listing_count} listings stored.")
+
+
 def print_match_summaries(summaries) -> None:
     for summary in summaries:
         print()
@@ -202,6 +212,9 @@ def main() -> None:
 
     inbox = commands.add_parser("inbox", help="List new listing-alert emails (reads only)")
     inbox.set_defaults(handler=inbox_command)
+
+    check_database = commands.add_parser("check-database", help="Count stored listings (keeps the free database active)")
+    check_database.set_defaults(handler=check_database_command)
 
     notify = commands.add_parser("notify", help="Post unsent matches to Slack")
     notify.set_defaults(handler=notify_command)

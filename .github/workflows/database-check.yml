@@ -1,0 +1,30 @@
+# The mid-week database check: one small read, nothing fetched or posted.
+#
+# Supabase pauses free projects after 7 days without activity, and the weekly
+# run alone is right at that limit (a late start once let the project pause).
+# This check runs Thursdays at 16:43 UTC, halfway between weekly runs, so the
+# database is never idle for more than about 4 days. The odd minute avoids
+# GitHub's delays at the top of the hour. It can also be started by hand.
+#
+# Secret: DATABASE_URL. It is never printed in logs.
+
+name: Database check
+
+on:
+  schedule:
+    - cron: "43 16 * * 4"
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Read from the database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run python cli.py check-database

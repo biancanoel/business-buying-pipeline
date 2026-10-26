@@ -212,3 +212,15 @@ def test_processed_emails_are_remembered(test_schema):
         assert storage.processed_email_ids() == {"<alert-1@bizbuysell.com>"}
     finally:
         storage.close()
+
+
+def test_count_listings_counts_every_stored_listing(test_schema):
+    storage = Storage.connect(schema=test_schema)
+    try:
+        empty_count = storage.count_listings()
+        storage.insert_new_listings([make_listing(), make_listing().model_copy(update={"id": uuid4(), "source_listing_id": "1000002"})])
+
+        assert empty_count == 0
+        assert storage.count_listings() == 2
+    finally:
+        storage.close()
