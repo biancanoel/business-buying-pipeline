@@ -1,8 +1,10 @@
 # The weekly run: fetch listings, read new ones, match, and post to Slack.
 #
-# Runs Mondays at 17:00 UTC: 10:00 Pacific in summer, 9:00 in winter (GitHub
-# schedules use UTC; the exact hour doesn't matter). It can also be started
-# by hand from the Actions tab ("Run workflow").
+# Runs Mondays at 16:37 UTC: 9:37 Pacific in summer, 8:37 in winter (GitHub
+# schedules use UTC; the exact hour doesn't matter). The odd minute is on
+# purpose: GitHub starts scheduled runs late when many are queued on the hour,
+# and runs set for :00 were starting more than four hours late. It can also be
+# started by hand from the Actions tab ("Run workflow").
 #
 # Secrets (Settings > Secrets and variables > Actions): ANTHROPIC_API_KEY,
 # DATABASE_URL, SLACK_WEBHOOK_URL, ALERTS_EMAIL_ADDRESS and
@@ -12,7 +14,7 @@ name: Weekly run
 
 on:
   schedule:
-    - cron: "0 17 * * 1"
+    - cron: "37 16 * * 1"
   workflow_dispatch:
     inputs:
       notify:
